@@ -225,7 +225,7 @@ def cocoso_app():
         use_container_width=True,
         column_config={
             "Type": st.column_config.SelectboxColumn("Type", options=["Benefit","Cost"]),
-            "Weight": st.column_config.NumberColumn("Weight", format="%.6f", min_value=0.0, max_value=1.0, step=0.01),
+            "Weight": st.column_config.NumberColumn("Weight", format="%.6f", min_value=0.0, max_value=1.0, step=0.000001),
         },
         key="cocoso_crit_editor_it2"
     )
