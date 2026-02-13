@@ -70,7 +70,7 @@ def it2_pow(A, w):
     return (new_u, new_l)
 
 # =========================================================
-# CoCoSo DEFUZZIFICATION (EXCEL MATCH)
+# CoCoSo DEFUZZIFICATION
 #   Crisp = (Score(UMF) + Score(LMF))/2
 #   Score(UMF) = a + [(d-a) + (uh2*c-a) + (uh1*b-a)]/4
 #   Score(LMF) = e + [(h-e) + (lh2*g-e) + (lh1*f-e)]/4
@@ -86,7 +86,7 @@ def cocoso_crisp_score(it2):
     return (score_u + score_l) / 2.0
 
 # =========================================================
-# IT2TrFS-CoCoSo linguistic scale (YOUR REQUIRED VALUES)
+# IT2TrFS-CoCoSo linguistic scale
 # =========================================================
 
 COCOSO_LINGUISTIC_TERMS = {
@@ -105,9 +105,7 @@ COCOSO_FULL = {
 }
 
 # =========================================================
-# CoCoSo NORMALIZATION (FIXED: EXACTLY AS YOUR FORMULA)
-#
-# From your Eq.(17)-(18):
+# CoCoSo NORMALIZATION 
 #   For BENEFIT (max):
 #       δ⁺_j^U = max_{i,h<=4} δ_ijh^U
 #       normalize by dividing ALL a..h by δ⁺_j^U
@@ -215,7 +213,7 @@ def format_it2_table(matrix_dict, alternatives, criteria, value_formatter=format
 
 def cocoso_app():
     st.header("📊 IT2TrFS-CoCoSo")
-    st.caption("Workflow matches your Excel: normalization uses δ⁺ (max) for Benefit and δ⁻ (min) for Cost; defuzz only after SBi/PBi.")
+    st.caption("Normalization uses δ⁺ (max) for Benefit and δ⁻ (min) for Cost")
 
     with st.expander("Linguistic scale (VP…VG)"):
         scale_df = pd.DataFrame(
@@ -252,7 +250,6 @@ def cocoso_app():
         use_container_width=True,
         column_config={
             "Type": st.column_config.SelectboxColumn("Type", options=["Benefit","Cost"]),
-            # ✅ allow 5-digit weights (0.00001 step + 5 decimals)
             "Weight": st.column_config.NumberColumn("Weight", format="%.5f", min_value=0.0, max_value=1.0, step=0.00001),
         },
         key="cocoso_crit_editor_it2"
@@ -320,7 +317,7 @@ def cocoso_app():
                 key=f"cocoso_editor_it2_{i}"
             )
 
-    st.subheader("Step 3: Calculate (Excel workflow)")
+    st.subheader("Step 3: Calculate")
     tau = st.number_input("τ (tau)", min_value=0.0, max_value=1.0, value=0.5, step=0.05, key="cocoso_tau")
 
     if st.button("✅ Run IT2TrFS-CoCoSo", type="primary", use_container_width=True, key="cocoso_run_it2"):
@@ -344,7 +341,7 @@ def cocoso_app():
             st.dataframe(format_it2_table(agg_matrix, alternatives, criteria), use_container_width=True)
 
             # -------------------------------------------------
-            # 3.2 Normalize (FIXED COST: EXACT δ⁻/x ORDER)
+            # 3.2 Normalize
             # -------------------------------------------------
             norm_matrix = normalize_it2_matrix_excel(
                 agg_matrix=agg_matrix,
@@ -359,7 +356,7 @@ def cocoso_app():
             # -------------------------------------------------
             # 3.3 SBi and PBi in IT2 domain
             #   SBi = Σ wj * r_ij
-            #   PBi = Σ (r_ij ^ wj)   (your Excel)
+            #   PBi = Σ (r_ij ^ wj)
             # -------------------------------------------------
             SBi = {}
             PBi = {}
@@ -377,10 +374,10 @@ def cocoso_app():
             sbi_df = pd.DataFrame([{"Alternative":alt, **it2_to_row(SBi[alt])} for alt in alternatives])
             pbi_df = pd.DataFrame([{"Alternative":alt, **it2_to_row(PBi[alt])} for alt in alternatives])
 
-            st.markdown("#### 3.3 SBi (IT2TrFS) — no defuzz")
+            st.markdown("#### 3.3 SBi (IT2TrFS)")
             st.dataframe(sbi_df.style.format(precision=6), use_container_width=True, hide_index=True)
 
-            st.markdown("#### 3.3 PBi (IT2TrFS) — Excel uses Σ(r^w), no defuzz")
+            st.markdown("#### 3.3 PBi (IT2TrFS)")
             st.dataframe(pbi_df.style.format(precision=6), use_container_width=True, hide_index=True)
 
             # -------------------------------------------------
@@ -431,8 +428,7 @@ def cocoso_app():
             st.dataframe(dfK.style.format(precision=6), use_container_width=True, hide_index=True)
 
 # =========================================================
-# ------------------- YOUR WINGS CODE ----------------------
-# (kept as-is, only wrapped in a function)
+# ------------------- WINGS CODE ----------------------
 # =========================================================
 
 LINGUISTIC_TERMS = {
