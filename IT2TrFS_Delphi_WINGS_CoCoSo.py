@@ -183,12 +183,12 @@ def format_it2_table(matrix_dict, alternatives, criteria, value_formatter=format
     return df
 
 # =========================================================
-# IT2TrFS-CoCoSo APP (Excel-matching)
+# IT2TrFS-CoCoSo APP
 # =========================================================
 
 def cocoso_app():
-    st.header("📊 IT2TrFS-CoCoSo (Excel-matching)")
-    st.caption("Implements the same workflow as the Excel sheet: IT2_F_CoCoSo_F (defuzzification only at the end).")
+    st.header("📊 IT2TrFS-CoCoSo ")
+    st.caption("Implements the same workflow as the Excel sheet: IT2_F_CoCoSo_F")
 
     with st.expander("Linguistic scale (VP…VG)"):
         scale_df = pd.DataFrame(
@@ -225,7 +225,7 @@ def cocoso_app():
         use_container_width=True,
         column_config={
             "Type": st.column_config.SelectboxColumn("Type", options=["Benefit","Cost"]),
-            "Weight": st.column_config.NumberColumn("Weight", format="%.6f", min_value=0.0, max_value=1.0, step=0.000001),
+            "Weight": st.column_config.NumberColumn("Weight", format="%.5f", min_value=0.0, max_value=1.0, step=0.00001),
         },
         key="cocoso_crit_editor_it2"
     )
@@ -234,7 +234,7 @@ def cocoso_app():
     criteria_weights = edited_crit_df["Weight"].astype(float).tolist()
 
     if not np.isclose(sum(criteria_weights), 1.0):
-        st.error(f"Criteria weights must sum to 1.0 (now: {sum(criteria_weights):.6f}).")
+        st.error(f"Criteria weights must sum to 1.0 (now: {sum(criteria_weights):.5f}).")
         return
 
     st.subheader("Step 2: Expert evaluations (linguistic)")
@@ -260,7 +260,7 @@ def cocoso_app():
                     )
                 )
         if not np.isclose(sum(expert_weights), 1.0):
-            st.error(f"Expert weights must sum to 1.0 (now: {sum(expert_weights):.6f}).")
+            st.error(f"Expert weights must sum to 1.0 (now: {sum(expert_weights):.5f}).")
             return
 
     # decision matrices per expert: alternatives x criteria with linguistic abbreviations
@@ -299,8 +299,7 @@ def cocoso_app():
         with st.spinner("Computing..."):
 
             # -------------------------------------------------
-            # 3.1 Aggregate expert matrices -> IT2TrFS matrix
-            # (no defuzzification here)
+            # 3.1 Aggregate expert matrices
             # -------------------------------------------------
             agg_matrix = {}
             for alt in alternatives:
@@ -314,11 +313,11 @@ def cocoso_app():
                         acc = it2w if acc is None else add_it2(acc, it2w)
                     agg_matrix[(alt, crit)] = acc
 
-            st.markdown("#### 3.1 Aggregated IT2TrFS Decision Matrix (NO defuzz)")
+            st.markdown("#### 3.1 Aggregated IT2TrFS Decision Matrix ")
             st.dataframe(format_it2_table(agg_matrix, alternatives, criteria), use_container_width=True)
 
             # -------------------------------------------------
-            # 3.2 Normalize (Excel match)
+            # 3.2 Normalize 
             # -------------------------------------------------
             norm_matrix = normalize_it2_matrix_excel(
                 agg_matrix=agg_matrix,
@@ -327,13 +326,13 @@ def cocoso_app():
                 criteria=criteria
             )
 
-            st.markdown("#### 3.2 Normalized IT2TrFS Matrix (Excel rules)")
+            st.markdown("#### 3.2 Normalized IT2TrFS Matrix ")
             st.dataframe(format_it2_table(norm_matrix, alternatives, criteria), use_container_width=True)
 
             # -------------------------------------------------
-            # 3.3 SBi and PBi in IT2 domain (NO defuzz)
+            # 3.3 SBi and PBi in IT2 domain 
             #   SBi(param) = Σ wj * r_ij(param)
-            #   PBi(param) = Σ (r_ij(param) ^ wj)   <-- Excel
+            #   PBi(param) = Σ (r_ij(param) ^ wj) 
             # -------------------------------------------------
             SBi = {}
             PBi = {}
@@ -360,7 +359,7 @@ def cocoso_app():
             st.dataframe(pbi_df.style.format(precision=6), use_container_width=True, hide_index=True)
 
             # -------------------------------------------------
-            # 3.4 Defuzzification at the END (Excel match)
+            # 3.4 Defuzzification
             # Crisp SBi, Crisp PBi
             # -------------------------------------------------
             crisp_S = {alt: cocoso_crisp_score(SBi[alt]) for alt in alternatives}
@@ -372,7 +371,7 @@ def cocoso_app():
                 "Crisp PBi": [crisp_P[a] for a in alternatives],
             })
 
-            st.markdown("#### 3.4 Crisp SBi & Crisp PBi (defuzz at end only)")
+            st.markdown("#### 3.4 Crisp SBi & Crisp PBi")
             st.dataframe(df_crisp.style.format(precision=6), use_container_width=True, hide_index=True)
 
             # -------------------------------------------------
@@ -641,7 +640,7 @@ def get_word_download_link(doc):
 
 def wings_app():
     st.title("📊 IT2TrFS WINGS Method Analysis Platform")
-    st.write("IT2TrFS-WINGS module (your existing implementation).")
+    st.write("IT2TrFS-WINGS module")
 
     tab_howto, tab_analysis = st.tabs(["📘 How to Use", "📊 Analysis"])
 
