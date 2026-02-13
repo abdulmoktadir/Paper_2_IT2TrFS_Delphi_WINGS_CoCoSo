@@ -17,10 +17,13 @@ import matplotlib.pyplot as plt
 
 def format_it2(it2):
     u, l = it2
-    return f"(({u[0]:.6f},{u[1]:.6f},{u[2]:.6f},{u[3]:.6f};{u[4]:.1f},{u[5]:.1f}), ({l[0]:.6f},{l[1]:.6f},{l[2]:.6f},{l[3]:.6f};{l[4]:.1f},{l[5]:.1f}))"
+    return (
+        f"(({u[0]:.6f},{u[1]:.6f},{u[2]:.6f},{u[3]:.6f};{u[4]:.1f},{u[5]:.1f}), "
+        f"({l[0]:.6f},{l[1]:.6f},{l[2]:.6f},{l[3]:.6f};{l[4]:.1f},{l[5]:.1f}))"
+    )
 
 def zero_it2():
-    return ((0,0,0,0,1,1), (0,0,0,0,0.9,0.9))
+    return ((0, 0, 0, 0, 1, 1), (0, 0, 0, 0, 0.9, 0.9))
 
 def add_it2(A, B):
     Au, Al = A
@@ -58,7 +61,6 @@ def it2_pow(A, w):
     Au, Al = A
 
     def pw(x):
-        # Excel handles 0^0 as 1; we mimic safely
         if x == 0 and w == 0:
             return 1.0
         return float(x) ** float(w)
@@ -76,11 +78,11 @@ def it2_pow(A, w):
 
 def cocoso_crisp_score(it2):
     Au, Al = it2
-    a,b,c,d,uh1,uh2 = Au
-    e,f,g,h,lh1,lh2 = Al
+    a, b, c, d, uh1, uh2 = Au
+    e, f, g, h, lh1, lh2 = Al
 
-    score_u = (((d-a) + ((uh2*c) - a) + ((uh1*b) - a)) / 4.0) + a
-    score_l = (((h-e) + ((lh2*g) - e) + ((lh1*f) - e)) / 4.0) + e
+    score_u = (((d - a) + ((uh2 * c) - a) + ((uh1 * b) - a)) / 4.0) + a
+    score_l = (((h - e) + ((lh2 * g) - e) + ((lh1 * f) - e)) / 4.0) + e
     return (score_u + score_l) / 2.0
 
 # =========================================================
@@ -88,81 +90,88 @@ def cocoso_crisp_score(it2):
 # =========================================================
 
 COCOSO_LINGUISTIC_TERMS = {
-    "VP": ((0,0,0,0.1,1,1), (0.05,0,0,0.05,0.9,0.9)),
-    "P" : ((0,0.1,0.1,0.3,1,1), (0.05,0.1,0.1,0.25,0.9,0.9)),
-    "MP": ((0.1,0.3,0.3,0.5,1,1), (0.15,0.3,0.3,0.45,0.9,0.9)),
-    "F" : ((0.3,0.5,0.5,0.7,1,1), (0.35,0.5,0.5,0.65,0.9,0.9)),
-    "MG": ((0.5,0.7,0.7,0.9,1,1), (0.55,0.7,0.7,0.85,0.9,0.9)),
-    "G" : ((0.7,0.9,0.9,1.0,1,1), (0.75,0.9,0.9,0.95,0.9,0.9)),
-    "VG": ((0.9,1.0,1.0,1.0,1,1), (0.95,1.0,1.0,0.95,0.9,0.9)),
+    "VP": ((0, 0, 0, 0.1, 1, 1), (0.05, 0, 0, 0.05, 0.9, 0.9)),
+    "P":  ((0, 0.1, 0.1, 0.3, 1, 1), (0.05, 0.1, 0.1, 0.25, 0.9, 0.9)),
+    "MP": ((0.1, 0.3, 0.3, 0.5, 1, 1), (0.15, 0.3, 0.3, 0.45, 0.9, 0.9)),
+    "F":  ((0.3, 0.5, 0.5, 0.7, 1, 1), (0.35, 0.5, 0.5, 0.65, 0.9, 0.9)),
+    "MG": ((0.5, 0.7, 0.7, 0.9, 1, 1), (0.55, 0.7, 0.7, 0.85, 0.9, 0.9)),
+    "G":  ((0.7, 0.9, 0.9, 1.0, 1, 1), (0.75, 0.9, 0.9, 0.95, 0.9, 0.9)),
+    "VG": ((0.9, 1.0, 1.0, 1.0, 1, 1), (0.95, 1.0, 1.0, 0.95, 0.9, 0.9)),
 }
 
 COCOSO_FULL = {
-    "VP":"Very Poor","P":"Poor","MP":"Medium Poor","F":"Fair",
-    "MG":"Medium Good","G":"Good","VG":"Very Good"
+    "VP": "Very Poor", "P": "Poor", "MP": "Medium Poor", "F": "Fair",
+    "MG": "Medium Good", "G": "Good", "VG": "Very Good"
 }
 
 # =========================================================
-# CoCoSo NORMALIZATION (EXCEL MATCH: IT2_F_CoCoSo_F)
+# CoCoSo NORMALIZATION (FIXED for Cost/Min Excel Row 29 logic)
 # =========================================================
 
 def normalize_it2_matrix_excel(agg_matrix, criteria_types, alternatives, criteria):
     """
-    agg_matrix: dict[(alt, crit)] -> IT2TrFS
-    criteria_types: list of 'Benefit'/'Cost' aligned with criteria
+    Excel-matching normalization:
 
-    Benefit normalization (Excel):
-      divisor = max over alternatives of max(a,b,c,d) [UMF only]
-      (a,b,c,d,e,f,g,h) /= divisor
+    If criterion is Benefit/Max:
+      div = max over alternatives of UMF d
+      (a,b,c,d,e,f,g,h) /= div     (heights unchanged)
 
-    Cost normalization (Excel):
-      base_min = min over alternatives of min(a,b,c,d) [UMF only]
-      then reverse divide:
-        UMF: (min/d, min/c, min/b, min/a)
-        LMF: (min/h, min/g, min/f, min/e)
+    If criterion is Cost/Min:
+      m = min over alternatives of UMF a
+      UMF -> (m/d, m/c, m/b, m/a)
+      LMF -> (m/h, m/g, m/f, m/e)
       heights unchanged
+
+    Accepts labels like:
+      Benefit, Cost, Max, Min, Benefit/Max, Cost/Min (case-insensitive).
     """
     norm = {}
 
+    def is_benefit(t: str) -> bool:
+        t = (t or "").strip().lower()
+        return t.startswith("b") or t.startswith("max")
+
+    def safe_div(num, den):
+        den = float(den)
+        if den == 0:
+            return 0.0
+        return float(num) / den
+
     for j, crit in enumerate(criteria):
-        # collect UMF parameters across alts for this criterion
-        umf_params = []
+        t = criteria_types[j]
+
+        # Excel uses UMF to find div (max of d) or m (min of a)
+        a_list = []
+        d_list = []
         for alt in alternatives:
             Au, _ = agg_matrix[(alt, crit)]
-            umf_params.extend([Au[0], Au[1], Au[2], Au[3]])
+            a_list.append(float(Au[0]))
+            d_list.append(float(Au[3]))
 
-        if criteria_types[j].lower().startswith("b"):  # Benefit
-            div = max(umf_params) if len(umf_params) else 1.0
-            div = div if div != 0 else 1.0
+        if is_benefit(t):  # Benefit / Max
+            div = max(d_list) if d_list else 1.0
+            if div == 0:
+                div = 1.0
 
             for alt in alternatives:
                 Au, Al = agg_matrix[(alt, crit)]
-                a,b,c,d,uh1,uh2 = Au
-                e,f,g,h,lh1,lh2 = Al
+                a, b, c, d, uh1, uh2 = Au
+                e, f, g, h, lh1, lh2 = Al
                 norm[(alt, crit)] = (
-                    (a/div, b/div, c/div, d/div, uh1, uh2),
-                    (e/div, f/div, g/div, h/div, lh1, lh2)
+                    (a / div, b / div, c / div, d / div, uh1, uh2),
+                    (e / div, f / div, g / div, h / div, lh1, lh2),
                 )
 
-        else:  # Cost
-            base_min = min(umf_params) if len(umf_params) else 0.0
-            # Excel uses the min of (a,b,c,d) across all alternatives (UMF)
-            m = base_min
+        else:  # Cost / Min
+            m = min(a_list) if a_list else 0.0
 
             for alt in alternatives:
                 Au, Al = agg_matrix[(alt, crit)]
-                a,b,c,d,uh1,uh2 = Au
-                e,f,g,h,lh1,lh2 = Al
+                a, b, c, d, uh1, uh2 = Au
+                e, f, g, h, lh1, lh2 = Al
 
-                # reverse divide (match Excel formulas)
-                def safe_div(num, den):
-                    den = float(den)
-                    if den == 0:
-                        return 0.0
-                    return float(num) / den
-
-                norm_umf = (safe_div(m,d), safe_div(m,c), safe_div(m,b), safe_div(m,a), uh1, uh2)
-                norm_lmf = (safe_div(m,h), safe_div(m,g), safe_div(m,f), safe_div(m,e), lh1, lh2)
+                norm_umf = (safe_div(m, d), safe_div(m, c), safe_div(m, b), safe_div(m, a), uh1, uh2)
+                norm_lmf = (safe_div(m, h), safe_div(m, g), safe_div(m, f), safe_div(m, e), lh1, lh2)
 
                 norm[(alt, crit)] = (norm_umf, norm_lmf)
 
@@ -171,8 +180,8 @@ def normalize_it2_matrix_excel(agg_matrix, criteria_types, alternatives, criteri
 def it2_to_row(it2):
     Au, Al = it2
     return {
-        "a":Au[0],"b":Au[1],"c":Au[2],"d":Au[3],"uh1":Au[4],"uh2":Au[5],
-        "e":Al[0],"f":Al[1],"g":Al[2],"h":Al[3],"lh1":Al[4],"lh2":Al[5],
+        "a": Au[0], "b": Au[1], "c": Au[2], "d": Au[3], "uh1": Au[4], "uh2": Au[5],
+        "e": Al[0], "f": Al[1], "g": Al[2], "h": Al[3], "lh1": Al[4], "lh2": Al[5],
     }
 
 def format_it2_table(matrix_dict, alternatives, criteria, value_formatter=format_it2):
@@ -187,12 +196,12 @@ def format_it2_table(matrix_dict, alternatives, criteria, value_formatter=format
 # =========================================================
 
 def cocoso_app():
-    st.header("📊 IT2TrFS-CoCoSo ")
-    st.caption("Implements the same workflow as the Excel sheet: IT2_F_CoCoSo_F")
+    st.header("📊 IT2TrFS-CoCoSo")
+    st.caption("Implements the same workflow as the Excel sheet: IT2_F_CoCoSo_F (defuzzification at the end).")
 
     with st.expander("Linguistic scale (VP…VG)"):
         scale_df = pd.DataFrame(
-            [{"Abbr":k, "Meaning":COCOSO_FULL[k], "IT2TrFS":format_it2(v)} for k,v in COCOSO_LINGUISTIC_TERMS.items()]
+            [{"Abbr": k, "Meaning": COCOSO_FULL[k], "IT2TrFS": format_it2(v)} for k, v in COCOSO_LINGUISTIC_TERMS.items()]
         )
         st.dataframe(scale_df, hide_index=True, use_container_width=True)
 
@@ -209,10 +218,9 @@ def cocoso_app():
         return
 
     # criteria table
-    if "cocoso_crit_df_it2" not in st.session_state or set(st.session_state.cocoso_crit_df_it2["Criterion"]) != set(criteria):
-        w = [round(1/len(criteria), 6)] * len(criteria)
-        if len(criteria) > 0:
-            w[-1] = 1.0 - sum(w[:-1])
+    if "cocoso_crit_df_it2" not in st.session_state or list(st.session_state.cocoso_crit_df_it2["Criterion"]) != criteria:
+        w = [round(1 / len(criteria), 6)] * len(criteria)
+        w[-1] = 1.0 - sum(w[:-1])
         st.session_state.cocoso_crit_df_it2 = pd.DataFrame({
             "Criterion": criteria,
             "Type": ["Benefit"] * len(criteria),
@@ -224,7 +232,7 @@ def cocoso_app():
         hide_index=True,
         use_container_width=True,
         column_config={
-            "Type": st.column_config.SelectboxColumn("Type", options=["Benefit","Cost"]),
+            "Type": st.column_config.SelectboxColumn("Type", options=["Benefit", "Cost", "Max", "Min", "Benefit/Max", "Cost/Min"]),
             "Weight": st.column_config.NumberColumn("Weight", format="%.5f", min_value=0.0, max_value=1.0, step=0.00001),
         },
         key="cocoso_crit_editor_it2"
@@ -251,9 +259,9 @@ def cocoso_app():
             with cols[i]:
                 expert_weights.append(
                     st.number_input(
-                        f"E{i+1}",
+                        f"E{i + 1}",
                         min_value=0.0, max_value=1.0,
-                        value=round(1/num_experts, 6),
+                        value=round(1 / num_experts, 6),
                         step=0.01,
                         format="%.6f",
                         key=f"cocoso_ew_{i}"
@@ -279,7 +287,7 @@ def cocoso_app():
             i: pd.DataFrame("F", index=alternatives, columns=criteria) for i in range(num_experts)
         }
 
-    tabs = st.tabs([f"Expert {i+1}" for i in range(num_experts)])
+    tabs = st.tabs([f"Expert {i + 1}" for i in range(num_experts)])
     for i, tab in enumerate(tabs):
         with tab:
             st.session_state.cocoso_expert_dfs_it2[i] = st.data_editor(
@@ -298,13 +306,10 @@ def cocoso_app():
     if st.button("✅ Run IT2TrFS-CoCoSo", type="primary", use_container_width=True, key="cocoso_run_it2"):
         with st.spinner("Computing..."):
 
-            # -------------------------------------------------
             # 3.1 Aggregate expert matrices
-            # -------------------------------------------------
             agg_matrix = {}
             for alt in alternatives:
                 for crit in criteria:
-                    # weighted average of parameters
                     acc = None
                     for e in range(num_experts):
                         term = st.session_state.cocoso_expert_dfs_it2[e].loc[alt, crit]
@@ -313,12 +318,10 @@ def cocoso_app():
                         acc = it2w if acc is None else add_it2(acc, it2w)
                     agg_matrix[(alt, crit)] = acc
 
-            st.markdown("#### 3.1 Aggregated IT2TrFS Decision Matrix ")
+            st.markdown("#### 3.1 Aggregated IT2TrFS Decision Matrix")
             st.dataframe(format_it2_table(agg_matrix, alternatives, criteria), use_container_width=True)
 
-            # -------------------------------------------------
-            # 3.2 Normalize 
-            # -------------------------------------------------
+            # 3.2 Normalize (FIXED Cost/Min)
             norm_matrix = normalize_it2_matrix_excel(
                 agg_matrix=agg_matrix,
                 criteria_types=criteria_types,
@@ -326,31 +329,24 @@ def cocoso_app():
                 criteria=criteria
             )
 
-            st.markdown("#### 3.2 Normalized IT2TrFS Matrix ")
+            st.markdown("#### 3.2 Normalized IT2TrFS Matrix")
             st.dataframe(format_it2_table(norm_matrix, alternatives, criteria), use_container_width=True)
 
-            # -------------------------------------------------
-            # 3.3 SBi and PBi in IT2 domain 
-            #   SBi(param) = Σ wj * r_ij(param)
-            #   PBi(param) = Σ (r_ij(param) ^ wj) 
-            # -------------------------------------------------
-            SBi = {}
-            PBi = {}
+            # 3.3 SBi and PBi in IT2 domain (NO defuzz here)
+            SBi, PBi = {}, {}
             for alt in alternatives:
                 s_acc = zero_it2()
                 p_acc = zero_it2()
                 for j, crit in enumerate(criteria):
                     r = norm_matrix[(alt, crit)]
                     wj = float(criteria_weights[j])
-
                     s_acc = add_it2(s_acc, scalar_mul_it2(wj, r))
                     p_acc = add_it2(p_acc, it2_pow(r, wj))
-
                 SBi[alt] = s_acc
                 PBi[alt] = p_acc
 
-            sbi_df = pd.DataFrame([{"Alternative":alt, **it2_to_row(SBi[alt])} for alt in alternatives])
-            pbi_df = pd.DataFrame([{"Alternative":alt, **it2_to_row(PBi[alt])} for alt in alternatives])
+            sbi_df = pd.DataFrame([{"Alternative": alt, **it2_to_row(SBi[alt])} for alt in alternatives])
+            pbi_df = pd.DataFrame([{"Alternative": alt, **it2_to_row(PBi[alt])} for alt in alternatives])
 
             st.markdown("#### 3.3 SBi (IT2TrFS) — no defuzz")
             st.dataframe(sbi_df.style.format(precision=6), use_container_width=True, hide_index=True)
@@ -358,10 +354,7 @@ def cocoso_app():
             st.markdown("#### 3.3 PBi (IT2TrFS) — Excel uses Σ(r^w), no defuzz")
             st.dataframe(pbi_df.style.format(precision=6), use_container_width=True, hide_index=True)
 
-            # -------------------------------------------------
-            # 3.4 Defuzzification
-            # Crisp SBi, Crisp PBi
-            # -------------------------------------------------
+            # 3.4 Defuzzification (at end)
             crisp_S = {alt: cocoso_crisp_score(SBi[alt]) for alt in alternatives}
             crisp_P = {alt: cocoso_crisp_score(PBi[alt]) for alt in alternatives}
 
@@ -374,9 +367,7 @@ def cocoso_app():
             st.markdown("#### 3.4 Crisp SBi & Crisp PBi")
             st.dataframe(df_crisp.style.format(precision=6), use_container_width=True, hide_index=True)
 
-            # -------------------------------------------------
             # 3.5 Kia, Kib, Kic, K (Excel formulas)
-            # -------------------------------------------------
             sumS = sum(crisp_S.values())
             sumP = sum(crisp_P.values())
             minS = min(crisp_S.values())
@@ -385,7 +376,7 @@ def cocoso_app():
             maxP = max(crisp_P.values())
 
             rows = []
-            denom_kic = (tau*maxS + (1.0-tau)*maxP)
+            denom_kic = (tau * maxS + (1.0 - tau) * maxP)
             denom_kic = denom_kic if denom_kic != 0 else 1.0
 
             for alt in alternatives:
@@ -393,47 +384,37 @@ def cocoso_app():
                 P = crisp_P[alt]
 
                 Kia = (S + P) / (sumS + sumP) if (sumS + sumP) != 0 else 0.0
-                Kib = (S/minS if minS != 0 else 0.0) + (P/minP if minP != 0 else 0.0)
-                Kic = ((tau*S) + ((1.0-tau)*P)) / denom_kic
+                Kib = (S / minS if minS != 0 else 0.0) + (P / minP if minP != 0 else 0.0)
+                Kic = ((tau * S) + ((1.0 - tau) * P)) / denom_kic
+                K = (Kia * Kib * Kic) ** (1 / 3) + ((Kia + Kib + Kic) / 3)
 
-                K = (Kia*Kib*Kic)**(1/3) + ((Kia + Kib + Kic)/3)
-
-                rows.append({
-                    "Alternative": alt,
-                    "Kia": Kia,
-                    "Kib": Kib,
-                    "Kic": Kic,
-                    "K": K
-                })
+                rows.append({"Alternative": alt, "Kia": Kia, "Kib": Kib, "Kic": Kic, "K": K})
 
             dfK = pd.DataFrame(rows)
-            # Excel RANK is descending
             dfK["Rank"] = dfK["K"].rank(ascending=False, method="min").astype(int)
             dfK = dfK.sort_values("Rank").reset_index(drop=True)
 
-            st.markdown("#### 3.5 Final CoCoSo indices (Excel: Kia, Kib, Kic, K) & Rank")
+            st.markdown("#### 3.5 Final CoCoSo indices (Kia, Kib, Kic, K) & Rank")
             st.dataframe(dfK.style.format(precision=6), use_container_width=True, hide_index=True)
 
 # =========================================================
-# ------------------- YOUR WINGS CODE ----------------------
-# (kept as-is, only wrapped in a function)
+# ------------------- WINGS MODULE (kept as-is) ------------
 # =========================================================
 
-# Define linguistic terms for IT2TrFS (WINGS)
 LINGUISTIC_TERMS = {
     "strength": {
         "VLR": ((0, 0.1, 0.1, 0.1, 1, 1), (0.0, 0.1, 0.1, 0.05, 0.9, 0.9)),
-        "LR": ((0.2, 0.3, 0.3, 0.4, 1, 1), (0.25, 0.3, 0.3, 0.35, 0.9, 0.9)),
-        "MR": ((0.4, 0.5, 0.5, 0.6, 1, 1), (0.45, 0.5, 0.5, 0.55, 0.9, 0.9)),
-        "HR": ((0.6, 0.7, 0.7, 0.8, 1, 1), (0.65, 0.7, 0.7, 0.75, 0.9, 0.9)),
+        "LR":  ((0.2, 0.3, 0.3, 0.4, 1, 1), (0.25, 0.3, 0.3, 0.35, 0.9, 0.9)),
+        "MR":  ((0.4, 0.5, 0.5, 0.6, 1, 1), (0.45, 0.5, 0.5, 0.55, 0.9, 0.9)),
+        "HR":  ((0.6, 0.7, 0.7, 0.8, 1, 1), (0.65, 0.7, 0.7, 0.75, 0.9, 0.9)),
         "VHR": ((0.8, 0.9, 0.9, 1, 1, 1), (0.85, 0.90, 0.90, 0.95, 0.9, 0.9))
     },
     "influence": {
         "ELI": ((0, 0.1, 0.1, 0.2, 1, 1), (0.05, 0.1, 0.1, 0.15, 0.9, 0.9)),
         "VLI": ((0.1, 0.2, 0.2, 0.35, 1, 1), (0.15, 0.2, 0.2, 0.3, 0.9, 0.9)),
-        "LI": ((0.2, 0.35, 0.35, 0.5, 1, 1), (0.25, 0.35, 0.35, 0.45, 0.9, 0.9)),
-        "MI": ((0.35, 0.5, 0.5, 0.65, 1, 1), (0.40, 0.5, 0.5, 0.6, 0.9, 0.9)),
-        "HI": ((0.5, 0.65, 0.65, 0.8, 1, 1), (0.55, 0.65, 0.65, 0.75, 0.9, 0.9)),
+        "LI":  ((0.2, 0.35, 0.35, 0.5, 1, 1), (0.25, 0.35, 0.35, 0.45, 0.9, 0.9)),
+        "MI":  ((0.35, 0.5, 0.5, 0.65, 1, 1), (0.40, 0.5, 0.5, 0.6, 0.9, 0.9)),
+        "HI":  ((0.5, 0.65, 0.65, 0.8, 1, 1), (0.55, 0.65, 0.65, 0.75, 0.9, 0.9)),
         "VHI": ((0.65, 0.80, 0.80, 0.9, 1, 1), (0.7, 0.8, 0.8, 0.85, 0.9, 0.9)),
         "EHI": ((0.8, 0.9, 0.9, 1, 1, 1), (0.85, 0.9, 0.9, 0.95, 0.9, 0.9))
     }
@@ -468,7 +449,6 @@ def compute_total_relation_matrix(normalized_matrix):
     n = len(normalized_matrix)
     I = identity_it2(n)
 
-    # Convert normalized_matrix to 4D array for parameter-wise computation
     Z_4d = np.zeros((2, 2, n, n, 4))
     for i in range(n):
         for j in range(n):
@@ -493,8 +473,10 @@ def compute_total_relation_matrix(normalized_matrix):
     for i in range(n):
         for j in range(n):
             T[i][j] = (
-                (Z_4d[0, 0, i, j, 0], Z_4d[0, 0, i, j, 1], Z_4d[0, 0, i, j, 2], Z_4d[0, 0, i, j, 3], Z_4d[0, 1, i, j, 0], Z_4d[0, 1, i, j, 1]),
-                (Z_4d[1, 0, i, j, 0], Z_4d[1, 0, i, j, 1], Z_4d[1, 0, i, j, 2], Z_4d[1, 0, i, j, 3], Z_4d[1, 1, i, j, 0], Z_4d[1, 1, i, j, 1])
+                (Z_4d[0, 0, i, j, 0], Z_4d[0, 0, i, j, 1], Z_4d[0, 0, i, j, 2], Z_4d[0, 0, i, j, 3],
+                 Z_4d[0, 1, i, j, 0], Z_4d[0, 1, i, j, 1]),
+                (Z_4d[1, 0, i, j, 0], Z_4d[1, 0, i, j, 1], Z_4d[1, 0, i, j, 2], Z_4d[1, 0, i, j, 3],
+                 Z_4d[1, 1, i, j, 0], Z_4d[1, 1, i, j, 1])
             )
     return T
 
@@ -525,13 +507,13 @@ def wings_method_experts(strengths_list, influence_matrices_list, weights=None):
                     inf_w = scalar_mul_it2(w, influence_matrices_list[exp][i][j])
                     avg_sidrm[i][j] = add_it2(avg_sidrm[i][j], inf_w)
 
-    s1U=s2U=s3U=s4U=s1L=s2L=s3L=s4L=0.0
+    s1U = s2U = s3U = s4U = s1L = s2L = s3L = s4L = 0.0
     for i in range(n):
         for j in range(n):
             Au, Al = avg_sidrm[i][j]
             s1U += Au[0]; s2U += Au[1]; s3U += Au[2]; s4U += Au[3]
             s1L += Al[0]; s2L += Al[1]; s3L += Al[2]; s4L += Al[3]
-    s = s1U+s2U+s3U+s4U+s1L+s2L+s3L+s4L
+    s = s1U + s2U + s3U + s4U + s1L + s2L + s3L + s4L
 
     Z_mat = [[zero_it2() for _ in range(n)] for _ in range(n)]
     for i in range(n):
@@ -651,15 +633,15 @@ def wings_app():
             with col1:
                 st.write("**Strength/Relevance Terms**")
                 strength_df = pd.DataFrame([
-                    {"Abbreviation":abbr, "Full Form":FULL_FORMS[abbr], "IT2TrFS":format_it2(it2)}
-                    for abbr,it2 in LINGUISTIC_TERMS["strength"].items()
+                    {"Abbreviation": abbr, "Full Form": FULL_FORMS[abbr], "IT2TrFS": format_it2(it2)}
+                    for abbr, it2 in LINGUISTIC_TERMS["strength"].items()
                 ])
                 st.dataframe(strength_df, hide_index=True, use_container_width=True)
             with col2:
                 st.write("**Influence Terms**")
                 infl_df = pd.DataFrame([
-                    {"Abbreviation":abbr, "Full Form":FULL_FORMS[abbr], "IT2TrFS":format_it2(it2)}
-                    for abbr,it2 in LINGUISTIC_TERMS["influence"].items()
+                    {"Abbreviation": abbr, "Full Form": FULL_FORMS[abbr], "IT2TrFS": format_it2(it2)}
+                    for abbr, it2 in LINGUISTIC_TERMS["influence"].items()
                 ])
                 st.dataframe(infl_df, hide_index=True, use_container_width=True)
 
@@ -691,8 +673,8 @@ def wings_app():
         for e in range(n_experts):
             if e not in st.session_state.experts_data:
                 st.session_state.experts_data[e] = {
-                    "strengths_linguistic": ["HR"]*n_components,
-                    "influence_matrix_linguistic": [["ELI"]*n_components for _ in range(n_components)]
+                    "strengths_linguistic": ["HR"] * n_components,
+                    "influence_matrix_linguistic": [["ELI"] * n_components for _ in range(n_components)]
                 }
 
         tabs = st.tabs([f"Expert {i+1}" for i in range(n_experts)]) if n_experts > 1 else [st.container()]
@@ -708,14 +690,17 @@ def wings_app():
                 for i in range(n_components):
                     with cols[i]:
                         cur = st.session_state.experts_data[e]["strengths_linguistic"][i]
-                        term = st.selectbox(component_names[i], options=list(LINGUISTIC_TERMS["strength"].keys()),
-                                            index=list(LINGUISTIC_TERMS["strength"].keys()).index(cur),
-                                            key=f"w_str_{e}_{i}")
+                        term = st.selectbox(
+                            component_names[i],
+                            options=list(LINGUISTIC_TERMS["strength"].keys()),
+                            index=list(LINGUISTIC_TERMS["strength"].keys()).index(cur),
+                            key=f"w_str_{e}_{i}"
+                        )
                         st.session_state.experts_data[e]["strengths_linguistic"][i] = term
                         strengths.append(LINGUISTIC_TERMS["strength"][term])
 
                 st.write("**Influence Matrix** (row influences column)")
-                inf_mat = [[None]*n_components for _ in range(n_components)]
+                inf_mat = [[None] * n_components for _ in range(n_components)]
                 for i in range(n_components):
                     row_cols = st.columns(n_components)
                     for j in range(n_components):
@@ -725,10 +710,12 @@ def wings_app():
                                 inf_mat[i][j] = zero_it2()
                             else:
                                 cur = st.session_state.experts_data[e]["influence_matrix_linguistic"][i][j]
-                                term = st.selectbox(f"{component_names[i]}→{component_names[j]}",
-                                                    options=list(LINGUISTIC_TERMS["influence"].keys()),
-                                                    index=list(LINGUISTIC_TERMS["influence"].keys()).index(cur),
-                                                    key=f"w_inf_{e}_{i}_{j}")
+                                term = st.selectbox(
+                                    f"{component_names[i]}→{component_names[j]}",
+                                    options=list(LINGUISTIC_TERMS["influence"].keys()),
+                                    index=list(LINGUISTIC_TERMS["influence"].keys()).index(cur),
+                                    key=f"w_inf_{e}_{i}_{j}"
+                                )
                                 st.session_state.experts_data[e]["influence_matrix_linguistic"][i][j] = term
                                 inf_mat[i][j] = LINGUISTIC_TERMS["influence"][term]
 
