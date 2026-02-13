@@ -4,54 +4,19 @@ import pandas as pd
 import graphviz
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-import io
-import base64
+import io, base64
 import matplotlib.pyplot as plt
-import re
 
 # ============================================================
-# IT2TrFS core (your WINGS code kept as-is, only reorganized)
+# 1) IT2TrFS core utilities (used by BOTH WINGS + CoCoSo)
 # ============================================================
-
-# Define linguistic terms for IT2TrFS
-LINGUISTIC_TERMS = {
-    "strength": {
-        "VLR": ((0, 0.1, 0.1, 0.1, 1, 1), (0.0, 0.1, 0.1, 0.05, 0.9, 0.9)),
-        "LR":  ((0.2, 0.3, 0.3, 0.4, 1, 1), (0.25, 0.3, 0.3, 0.35, 0.9, 0.9)),
-        "MR":  ((0.4, 0.5, 0.5, 0.6, 1, 1), (0.45, 0.5, 0.5, 0.55, 0.9, 0.9)),
-        "HR":  ((0.6, 0.7, 0.7, 0.8, 1, 1), (0.65, 0.7, 0.7, 0.75, 0.9, 0.9)),
-        "VHR": ((0.8, 0.9, 0.9, 1,   1, 1), (0.85, 0.90,0.90,0.95, 0.9, 0.9)),
-    },
-    "influence": {
-        "ELI": ((0,   0.1, 0.1, 0.2, 1, 1), (0.05,0.1, 0.1, 0.15,0.9,0.9)),
-        "VLI": ((0.1, 0.2, 0.2, 0.35,1, 1), (0.15,0.2, 0.2, 0.3, 0.9,0.9)),
-        "LI":  ((0.2, 0.35,0.35,0.5, 1, 1), (0.25,0.35,0.35,0.45,0.9,0.9)),
-        "MI":  ((0.35,0.5, 0.5, 0.65,1, 1), (0.40,0.5, 0.5, 0.6, 0.9,0.9)),
-        "HI":  ((0.5, 0.65,0.65,0.8, 1, 1), (0.55,0.65,0.65,0.75,0.9,0.9)),
-        "VHI": ((0.65,0.80,0.80,0.9, 1, 1), (0.7, 0.8, 0.8, 0.85,0.9,0.9)),
-        "EHI": ((0.8, 0.9, 0.9, 1,   1, 1), (0.85,0.9, 0.9, 0.95,0.9,0.9)),
-    }
-}
-
-# Full forms
-FULL_FORMS = {
-    "VLR": "Very Low Relevance",
-    "LR":  "Low Relevance",
-    "MR":  "Medium Relevance",
-    "HR":  "High Relevance",
-    "VHR": "Very High Relevance",
-    "ELI": "Extremely Low Influence",
-    "VLI": "Very Low Influence",
-    "LI":  "Low Influence",
-    "MI":  "Medium Influence",
-    "HI":  "High Influence",
-    "VHI": "Very High Influence",
-    "EHI": "Extremely High Influence",
-}
 
 def format_it2(it2):
     u, l = it2
-    return f"(({u[0]:.6f},{u[1]:.6f},{u[2]:.6f},{u[3]:.6f};{u[4]:.1f},{u[5]:.1f}), ({l[0]:.6f},{l[1]:.6f},{l[2]:.6f},{l[3]:.6f};{l[4]:.1f},{l[5]:.1f}))"
+    return f"(({u[0]:.6f},{u[1]:.6f},{u[2]:.6f},{u[3]:.6f};{u[4]:.2f},{u[5]:.2f}), ({l[0]:.6f},{l[1]:.6f},{l[2]:.6f},{l[3]:.6f};{l[4]:.2f},{l[5]:.2f}))"
+
+def zero_it2():
+    return ((0,0,0,0,1,1), (0,0,0,0,0.9,0.9))
 
 def add_it2(A, B):
     Au, Al = A; Bu, Bl = B
@@ -72,17 +37,106 @@ def mul_it2(A, B):
     return (new_u, new_l)
 
 def scalar_mul_it2(k, A):
+    # NOTE: kept consistent with your WINGS averaging style (scale a,b,c,d only; heights unchanged)
     Au, Al = A
     new_u = (k*Au[0], k*Au[1], k*Au[2], k*Au[3], Au[4], Au[5])
     new_l = (k*Al[0], k*Al[1], k*Al[2], k*Al[3], Al[4], Al[5])
     return (new_u, new_l)
 
-def zero_it2():
-    return ((0,0,0,0,1,1), (0,0,0,0,0.9,0.9))
-
 def defuzz_it2(A):
     Au, Al = A
+    # simple centroid-like average of (a,b,c,d) for UMF and LMF
     return (Au[0]+Au[1]+Au[2]+Au[3]+Al[0]+Al[1]+Al[2]+Al[3]) / 8
+
+def it2_weighted_avg(it2_list, weights):
+    if len(it2_list) != len(weights) or len(it2_list) == 0:
+        return None
+    if not np.isclose(sum(weights), 1.0):
+        return None
+    out = zero_it2()
+    for it2, w in zip(it2_list, weights):
+        out = add_it2(out, scalar_mul_it2(w, it2))
+    return out
+
+def it2_weighted_geo(it2_list, weights):
+    """
+    Weighted geometric aggregation for IT2TrFS (parameter-wise power product).
+    Heights are combined conservatively via min.
+    """
+    if len(it2_list) != len(weights) or len(it2_list) == 0:
+        return None
+    if not np.isclose(sum(weights), 1.0):
+        return None
+
+    # protect against zeros
+    eps = 1e-12
+
+    u_a = np.prod([max(it2[0][0], eps)**w for it2, w in zip(it2_list, weights)])
+    u_b = np.prod([max(it2[0][1], eps)**w for it2, w in zip(it2_list, weights)])
+    u_c = np.prod([max(it2[0][2], eps)**w for it2, w in zip(it2_list, weights)])
+    u_d = np.prod([max(it2[0][3], eps)**w for it2, w in zip(it2_list, weights)])
+
+    l_a = np.prod([max(it2[1][0], eps)**w for it2, w in zip(it2_list, weights)])
+    l_b = np.prod([max(it2[1][1], eps)**w for it2, w in zip(it2_list, weights)])
+    l_c = np.prod([max(it2[1][2], eps)**w for it2, w in zip(it2_list, weights)])
+    l_d = np.prod([max(it2[1][3], eps)**w for it2, w in zip(it2_list, weights)])
+
+    uh1 = min([it2[0][4] for it2 in it2_list])
+    uh2 = min([it2[0][5] for it2 in it2_list])
+    lh1 = min([it2[1][4] for it2 in it2_list])
+    lh2 = min([it2[1][5] for it2 in it2_list])
+
+    return ((u_a, u_b, u_c, u_d, uh1, uh2),
+            (l_a, l_b, l_c, l_d, lh1, lh2))
+
+def it2_complement(A):
+    """
+    Simple trapezoid complement (for COST handling if you want IT2-level inversion):
+    (a,b,c,d) -> (1-d, 1-c, 1-b, 1-a); heights unchanged.
+    """
+    Au, Al = A
+    cu = (1-Au[3], 1-Au[2], 1-Au[1], 1-Au[0], Au[4], Au[5])
+    cl = (1-Al[3], 1-Al[2], 1-Al[1], 1-Al[0], Al[4], Al[5])
+    return (cu, cl)
+
+
+# ============================================================
+# 2) WINGS module (your original linguistic sets)
+# ============================================================
+
+LINGUISTIC_TERMS_WINGS = {
+    "strength": {
+        "VLR": ((0, 0.1, 0.1, 0.1, 1, 1), (0.0, 0.1, 0.1, 0.05, 0.9, 0.9)),
+        "LR":  ((0.2, 0.3, 0.3, 0.4, 1, 1), (0.25, 0.3, 0.3, 0.35, 0.9, 0.9)),
+        "MR":  ((0.4, 0.5, 0.5, 0.6, 1, 1), (0.45, 0.5, 0.5, 0.55, 0.9, 0.9)),
+        "HR":  ((0.6, 0.7, 0.7, 0.8, 1, 1), (0.65, 0.7, 0.7, 0.75, 0.9, 0.9)),
+        "VHR": ((0.8, 0.9, 0.9, 1,   1, 1), (0.85, 0.90,0.90,0.95, 0.9, 0.9))
+    },
+    "influence": {
+        "ELI": ((0,   0.1, 0.1, 0.2, 1, 1), (0.05,0.1, 0.1, 0.15,0.9,0.9)),
+        "VLI": ((0.1, 0.2, 0.2, 0.35,1, 1), (0.15,0.2, 0.2, 0.3, 0.9,0.9)),
+        "LI":  ((0.2, 0.35,0.35,0.5, 1, 1), (0.25,0.35,0.35,0.45,0.9,0.9)),
+        "MI":  ((0.35,0.5, 0.5, 0.65,1, 1), (0.40,0.5, 0.5, 0.6, 0.9,0.9)),
+        "HI":  ((0.5, 0.65,0.65,0.8, 1, 1), (0.55,0.65,0.65,0.75,0.9,0.9)),
+        "VHI": ((0.65,0.80,0.80,0.9, 1, 1), (0.7, 0.8, 0.8, 0.85,0.9,0.9)),
+        "EHI": ((0.8, 0.9, 0.9, 1,   1, 1), (0.85,0.9, 0.9, 0.95,0.9,0.9))
+    }
+}
+
+FULL_FORMS_WINGS = {
+    "VLR": "Very Low Relevance",
+    "LR":  "Low Relevance",
+    "MR":  "Medium Relevance",
+    "HR":  "High Relevance",
+    "VHR": "Very High Relevance",
+    "ELI": "Extremely Low Influence",
+    "VLI": "Very Low Influence",
+    "LI":  "Low Influence",
+    "MI":  "Medium Influence",
+    "HI":  "High Influence",
+    "VHI": "Very High Influence",
+    "EHI": "Extremely High Influence"
+}
 
 def identity_it2(n):
     I_mat = [[zero_it2() for _ in range(n)] for _ in range(n)]
@@ -92,20 +146,17 @@ def identity_it2(n):
 
 def compute_total_relation_matrix(normalized_matrix):
     n = len(normalized_matrix)
-    I = identity_it2(n)
 
-    # Convert normalized_matrix to 4D array for parameter-wise computation
     Z_4d = np.zeros((2, 2, n, n, 4))
     for i in range(n):
         for j in range(n):
             Au, Al = normalized_matrix[i][j]
-            Z_4d[0, 0, i, j, :] = Au[:4]          # UMF a,b,c,d
-            Z_4d[0, 1, i, j, :2] = Au[4:]         # UMF heights
-            Z_4d[1, 0, i, j, :] = Al[:4]          # LMF a,b,c,d
-            Z_4d[1, 1, i, j, :2] = Al[4:]         # LMF heights
+            Z_4d[0, 0, i, j, :] = Au[:4]
+            Z_4d[0, 1, i, j, :2] = Au[4:]
+            Z_4d[1, 0, i, j, :] = Al[:4]
+            Z_4d[1, 1, i, j, :2] = Al[4:]
 
-    # Compute T for each parameter (a,b,c,d only)
-    for i in range(2):  # UMF/LMF
+    for i in range(2):
         for k in range(4):
             Z_component = Z_4d[i, 0, :, :, k]
             try:
@@ -114,7 +165,6 @@ def compute_total_relation_matrix(normalized_matrix):
                 T_component = np.zeros((n, n))
             Z_4d[i, 0, :, :, k] = T_component
 
-    # Reconstruct IT2TrFS matrix
     T = [[zero_it2() for _ in range(n)] for _ in range(n)]
     for i in range(n):
         for j in range(n):
@@ -122,7 +172,7 @@ def compute_total_relation_matrix(normalized_matrix):
                 (Z_4d[0,0,i,j,0], Z_4d[0,0,i,j,1], Z_4d[0,0,i,j,2], Z_4d[0,0,i,j,3],
                  Z_4d[0,1,i,j,0], Z_4d[0,1,i,j,1]),
                 (Z_4d[1,0,i,j,0], Z_4d[1,0,i,j,1], Z_4d[1,0,i,j,2], Z_4d[1,0,i,j,3],
-                 Z_4d[1,1,i,j,0], Z_4d[1,1,i,j,1]),
+                 Z_4d[1,1,i,j,0], Z_4d[1,1,i,j,1])
             )
     return T
 
@@ -140,9 +190,8 @@ def wings_method_experts(strengths_list, influence_matrices_list, weights=None):
     n = len(strengths_list[0])
     num_experts = len(strengths_list)
     if weights is None:
-        weights = [1.0/num_experts]*num_experts
+        weights = [1.0 / num_experts] * num_experts
 
-    # weighted average SIDRM
     avg_sidrm = [[zero_it2() for _ in range(n)] for _ in range(n)]
     for exp in range(num_experts):
         w = weights[exp]
@@ -152,7 +201,6 @@ def wings_method_experts(strengths_list, influence_matrices_list, weights=None):
                 if i != j:
                     avg_sidrm[i][j] = add_it2(avg_sidrm[i][j], scalar_mul_it2(w, influence_matrices_list[exp][i][j]))
 
-    # normalization scalar s (sum of all a,b,c,d across UMF+LMF)
     s = 0.0
     for i in range(n):
         for j in range(n):
@@ -163,34 +211,28 @@ def wings_method_experts(strengths_list, influence_matrices_list, weights=None):
     for i in range(n):
         for j in range(n):
             Au, Al = avg_sidrm[i][j]
-            new_u = (Au[0]/s if s else 0, Au[1]/s if s else 0, Au[2]/s if s else 0, Au[3]/s if s else 0, Au[4], Au[5])
-            new_l = (Al[0]/s if s else 0, Al[1]/s if s else 0, Al[2]/s if s else 0, Al[3]/s if s else 0, Al[4], Al[5])
-            Z_mat[i][j] = (new_u, new_l)
+            Z_mat[i][j] = (
+                (Au[0]/s if s else 0, Au[1]/s if s else 0, Au[2]/s if s else 0, Au[3]/s if s else 0, Au[4], Au[5]),
+                (Al[0]/s if s else 0, Al[1]/s if s else 0, Al[2]/s if s else 0, Al[3]/s if s else 0, Al[4], Al[5])
+            )
 
     T_mat = compute_total_relation_matrix(Z_mat)
     TI, TR = calculate_TI_TR(T_mat)
-
     engagement = [add_it2(TI[i], TR[i]) for i in range(n)]
-    role       = [sub_it2(TI[i], TR[i]) for i in range(n)]
-
-    TI_defuzz = np.array([defuzz_it2(TI[i]) for i in range(n)])
-    TR_defuzz = np.array([defuzz_it2(TR[i]) for i in range(n)])
-    engagement_defuzz = np.array([defuzz_it2(engagement[i]) for i in range(n)])
-    role_defuzz = np.array([defuzz_it2(role[i]) for i in range(n)])
+    role = [sub_it2(TI[i], TR[i]) for i in range(n)]
 
     return {
         'average_sidrm': avg_sidrm,
-        'scaling_factor': s,
         'normalized_matrix': Z_mat,
         'total_matrix': T_mat,
         'total_impact': TI,
         'total_receptivity': TR,
         'engagement': engagement,
         'role': role,
-        'total_impact_defuzz': TI_defuzz,
-        'total_receptivity_defuzz': TR_defuzz,
-        'engagement_defuzz': engagement_defuzz,
-        'role_defuzz': role_defuzz
+        'total_impact_defuzz': np.array([defuzz_it2(x) for x in TI]),
+        'total_receptivity_defuzz': np.array([defuzz_it2(x) for x in TR]),
+        'engagement_defuzz': np.array([defuzz_it2(x) for x in engagement]),
+        'role_defuzz': np.array([defuzz_it2(x) for x in role]),
     }
 
 def format_it2_df(mat, index, columns):
@@ -206,638 +248,416 @@ def generate_flowchart_for_expert(expert_data, component_names, expert_idx=None)
 
     for comp_idx, comp_name in enumerate(component_names):
         strength = expert_data['strengths_linguistic'][comp_idx]
-        label = f"{comp_name} ({strength})"
-        graph.node(comp_name, label=label, shape='box', style='rounded,filled', fillcolor='lightblue', fontsize='12')
+        graph.node(comp_name, label=f"{comp_name} ({strength})", shape='box',
+                   style='rounded,filled', fillcolor='lightblue', fontsize='12')
 
-    for from_idx, from_comp in enumerate(component_names):
-        for to_idx, to_comp in enumerate(component_names):
-            if from_idx == to_idx:
+    for i, f in enumerate(component_names):
+        for j, t in enumerate(component_names):
+            if i == j:
                 continue
-            influence = expert_data['influence_matrix_linguistic'][from_idx][to_idx]
-            if influence != "ELI":
-                graph.edge(from_comp, to_comp, label=influence)
-
+            inf = expert_data['influence_matrix_linguistic'][i][j]
+            if inf != "ELI":
+                graph.edge(f, t, label=inf)
     return graph
-
-def add_dataframe_to_doc(doc, df):
-    table = doc.add_table(rows=1, cols=len(df.columns)+1)
-    table.style = 'Table Grid'
-    hdr_cells = table.rows[0].cells
-    hdr_cells[0].text = ''
-    for i, col in enumerate(df.columns):
-        hdr_cells[i+1].text = str(col)
-    for i, index in enumerate(df.index):
-        row_cells = table.add_row().cells
-        row_cells[0].text = str(index)
-        for j, col in enumerate(df.columns):
-            row_cells[j+1].text = str(df.iloc[i, j])
-    doc.add_paragraph()
 
 def create_word_report(results, component_names, n_experts=1, expert_weights=None):
     doc = Document()
     title = doc.add_heading('IT2TrFS WINGS Analysis Report', 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    from datetime import datetime
-    doc.add_paragraph(f"Report generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     doc.add_paragraph(f"Number of experts: {n_experts}")
-
     if expert_weights and n_experts > 1:
-        doc.add_paragraph("Expert weights: " + ", ".join([f"Expert {i+1}: {w:.2f}" for i, w in enumerate(expert_weights)]))
-
-    comp_para = doc.add_paragraph("Components analyzed: ")
-    for i, name in enumerate(component_names):
-        comp_para.add_run(f"{i+1}. {name}  ")
-
-    doc.add_heading('Impact, Receptivity, Engagement, and Role Results', level=1)
-    table = doc.add_table(rows=1, cols=5)
-    table.style = 'Table Grid'
-    hdr = table.rows[0].cells
-    hdr[0].text = 'Component'
-    hdr[1].text = 'Total Impact (TI)'
-    hdr[2].text = 'Total Receptivity (TR)'
-    hdr[3].text = 'Engagement (TI+TR)'
-    hdr[4].text = 'Role (TI-TR)'
-
-    for i, name in enumerate(component_names):
-        r = table.add_row().cells
-        r[0].text = name
-        r[1].text = f"{results['total_impact_defuzz'][i]:.6f}"
-        r[2].text = f"{results['total_receptivity_defuzz'][i]:.6f}"
-        r[3].text = f"{results['engagement_defuzz'][i]:.6f}"
-        r[4].text = f"{results['role_defuzz'][i]:.6f}"
-
-    doc.add_heading('Component Classification', level=1)
-    class_table = doc.add_table(rows=1, cols=3)
-    class_table.style = 'Table Grid'
-    hdr = class_table.rows[0].cells
-    hdr[0].text = 'Component'
-    hdr[1].text = 'Type'
-    hdr[2].text = 'Role (TI-TR)'
-
-    for i, name in enumerate(component_names):
-        status = "Cause" if results['role_defuzz'][i] > 0 else "Effect"
-        r = class_table.add_row().cells
-        r[0].text = name
-        r[1].text = status
-        r[2].text = f"{results['role_defuzz'][i]:.6f}"
-
-    doc.add_heading('Matrices', level=1)
-    doc.add_heading('Average SIDRM', level=2)
-    add_dataframe_to_doc(doc, format_it2_df(results['average_sidrm'], component_names, component_names))
-    doc.add_heading('Normalized Matrix Z', level=2)
-    add_dataframe_to_doc(doc, format_it2_df(results['normalized_matrix'], component_names, component_names))
-    doc.add_heading('Total Matrix T (IT2TrFS)', level=2)
-    add_dataframe_to_doc(doc, format_it2_df(results['total_matrix'], component_names, component_names))
-
-    doc.add_heading('Interpretation of Results', level=1)
-    doc.add_paragraph("Total Impact (TI) represents the outgoing influence of a component.")
-    doc.add_paragraph("Total Receptivity (TR) represents the incoming influence on a component.")
-    doc.add_paragraph("Engagement (TI+TR) indicates the overall involvement of a component in the system.")
-    doc.add_paragraph("Role (TI-TR) indicates cause/effect: positive = Cause, negative = Effect.")
+        doc.add_paragraph("Expert weights: " + ", ".join([f"E{i+1}={w:.2f}" for i, w in enumerate(expert_weights)]))
     return doc
 
 def get_word_download_link(doc):
-    file_stream = io.BytesIO()
-    doc.save(file_stream)
-    file_stream.seek(0)
-    b64 = base64.b64encode(file_stream.read()).decode()
-    return f'<a href="data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,{b64}" download="it2trfs_wings_analysis_report.docx">Download Word Report</a>'
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    b64 = base64.b64encode(buf.read()).decode()
+    return f'<a href="data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,{b64}" download="it2trfs_wings_report.docx">Download Word Report</a>'
 
 
 # ============================================================
-# IT2TrFS-CoCoSo (Excel-driven integration)
-# Reads your sample Excel and presents:
-# - linguistic scale (sheet1)
-# - expert linguistic decision matrices (EX-1..EX-n)
-# - weights (sheet2)
-# - normalized matrices per alternative (sheet2)
-# - Sbi/Pbi and final K + Rank (sheet2)
+# 3) IT2TrFS-CoCoSo (MANUAL INPUT like your IVIFN app)
 # ============================================================
 
-def _safe_str(x):
-    return "" if pd.isna(x) else str(x)
+def default_cocoso_scale():
+    """
+    Default scale (editable). Replace these numbers with your paper’s scale if needed.
+    Each row is an IT2TrFS number: UMF(a,b,c,d;uh1,uh2) and LMF(e,f,g,h;lh1,lh2)
+    """
+    rows = [
+        ("Very Poor",  "VP", 0.00,0.10,0.10,0.20,1.00,1.00, 0.00,0.05,0.05,0.15,0.90,0.90),
+        ("Poor",       "P",  0.10,0.20,0.20,0.35,1.00,1.00, 0.15,0.20,0.20,0.30,0.90,0.90),
+        ("Medium Poor","MP", 0.20,0.35,0.35,0.50,1.00,1.00, 0.25,0.35,0.35,0.45,0.90,0.90),
+        ("Fair",       "F",  0.35,0.50,0.50,0.65,1.00,1.00, 0.40,0.50,0.50,0.60,0.90,0.90),
+        ("Medium Good","MG", 0.50,0.65,0.65,0.80,1.00,1.00, 0.55,0.65,0.65,0.75,0.90,0.90),
+        ("Good",       "G",  0.65,0.80,0.80,0.90,1.00,1.00, 0.70,0.80,0.80,0.85,0.90,0.90),
+        ("Very Good",  "VG", 0.80,0.90,0.90,1.00,1.00,1.00, 0.85,0.90,0.90,0.95,0.90,0.90),
+    ]
+    return pd.DataFrame(rows, columns=["Linguistic Attribute","Code","a","b","c","d","uh1","uh2","e","f","g","h","lh1","lh2"])
 
-def _find_cell(df, target):
-    for i in range(df.shape[0]):
-        for j in range(df.shape[1]):
-            if df.iat[i, j] == target:
-                return (i, j)
-    return None
-
-def _parse_it2_from_row(row_dict):
-    # expects keys: a,b,c,d,uh1,uh2,e,f,g,h,lh1,lh2
-    u = (float(row_dict["a"]), float(row_dict["b"]), float(row_dict["c"]), float(row_dict["d"]),
-         float(row_dict["uh1"]), float(row_dict["uh2"]))
-    l = (float(row_dict["e"]), float(row_dict["f"]), float(row_dict["g"]), float(row_dict["h"]),
-         float(row_dict["lh1"]), float(row_dict["lh2"]))
-    return (u, l)
-
-def parse_cocoso_excel(xlsx_bytes_or_path):
-    xls = pd.ExcelFile(xlsx_bytes_or_path)
-
-    # --- sheet 1: input + linguistic table ---
-    sh1 = pd.read_excel(xlsx_bytes_or_path, sheet_name=xls.sheet_names[0], header=None)
-
-    # linguistic scale table
-    loc = _find_cell(sh1, "Linguistic Attribute")
-    if not loc:
-        raise ValueError("Could not find 'Linguistic Attribute' table in sheet 1.")
-    r0, c0 = loc
-
-    # expected columns: [Linguistic Attribute, IT-2FNumber, (string), a,b,c,d,uh1,uh2,e,f,g,h,lh1,lh2]
-    scale_rows = []
-    for r in range(r0 + 1, r0 + 20):
-        term = _safe_str(sh1.iat[r, c0]).strip()
-        code = _safe_str(sh1.iat[r, c0 + 1]).strip()
-        if not term or not code:
+def scale_df_to_map(scale_df: pd.DataFrame):
+    mapping = {}
+    for _, r in scale_df.iterrows():
+        code = str(r["Code"]).strip()
+        if not code:
             continue
-        a = sh1.iat[r, c0 + 3]; b = sh1.iat[r, c0 + 4]; c = sh1.iat[r, c0 + 5]; d = sh1.iat[r, c0 + 6]
-        uh1 = sh1.iat[r, c0 + 7]; uh2 = sh1.iat[r, c0 + 8]
-        e = sh1.iat[r, c0 + 9]; f = sh1.iat[r, c0 + 10]; g = sh1.iat[r, c0 + 11]; h = sh1.iat[r, c0 + 12]
-        lh1 = sh1.iat[r, c0 + 13]; lh2 = sh1.iat[r, c0 + 14]
-        if any(pd.isna(v) for v in [a,b,c,d,uh1,uh2,e,f,g,h,lh1,lh2]):
-            continue
-        scale_rows.append({
-            "Linguistic Attribute": term,
-            "Code": code,
-            "a": float(a), "b": float(b), "c": float(c), "d": float(d),
-            "uh1": float(uh1), "uh2": float(uh2),
-            "e": float(e), "f": float(f), "g": float(g), "h": float(h),
-            "lh1": float(lh1), "lh2": float(lh2),
-            "IT2TrFS": _parse_it2_from_row({
-                "a": a, "b": b, "c": c, "d": d, "uh1": uh1, "uh2": uh2,
-                "e": e, "f": f, "g": g, "h": h, "lh1": lh1, "lh2": lh2
-            })
-        })
+        it2 = (
+            (float(r["a"]), float(r["b"]), float(r["c"]), float(r["d"]), float(r["uh1"]), float(r["uh2"])),
+            (float(r["e"]), float(r["f"]), float(r["g"]), float(r["h"]), float(r["lh1"]), float(r["lh2"])),
+        )
+        mapping[code] = it2
+    return mapping
 
-    scale_df = pd.DataFrame(scale_rows)
-    code_to_it2 = {row["Code"]: row["IT2TrFS"] for _, row in scale_df.iterrows()}
+def module_cocoso_manual():
+    st.header("📊 IT2TrFS–CoCoSo (Manual input like IVIFN app)")
 
-    # expert blocks: detect EX-* in row 0
-    ex_cols = []
-    for j in range(sh1.shape[1]):
-        v = sh1.iat[0, j]
-        if isinstance(v, str) and v.strip().startswith("EX-"):
-            ex_cols.append((v.strip(), j))
+    st.markdown("""
+    **Workflow**
+    1) Define alternatives + criteria  
+    2) Set criterion type (Benefit/Cost) + weights (sum=1)  
+    3) Choose number of experts + expert weights (sum=1)  
+    4) Fill expert evaluation matrices using linguistic codes (dropdown)  
+    5) Run CoCoSo → see aggregated IT2TrFS matrix + crisp normalization + final K & rank
+    """)
 
-    # criteria in col 1, optimization in col 2 starting row 4 until blank
-    criteria = []
-    optm = []
-    r = 4
-    while r < sh1.shape[0]:
-        c_name = _safe_str(sh1.iat[r, 1]).strip()
-        if not c_name:
-            break
-        criteria.append(c_name)
-        optm.append(_safe_str(sh1.iat[r, 2]).strip())
-        r += 1
+    # ---- Linguistic scale (editable) ----
+    st.subheader("Step 0: Linguistic scale (editable)")
+    if "cocoso_scale_df" not in st.session_state:
+        st.session_state.cocoso_scale_df = default_cocoso_scale()
 
-    # each EX block has 7 alternatives columns (VT1..VT7) in this template
-    experts = []
-    for ex_name, start_col in ex_cols:
-        # alt codes on row 3, names on row 2
-        alt_codes = []
-        alt_names = []
-        for j in range(start_col, start_col + 7):
-            code = _safe_str(sh1.iat[3, j]).strip()
-            name = _safe_str(sh1.iat[2, j]).strip()
-            if code:
-                alt_codes.append(code.replace(" ", ""))
-                alt_names.append(name if name else code)
-        # decision matrix linguistic codes
-        mat = pd.DataFrame(index=criteria, columns=alt_codes, dtype=str)
-        for i_c, c_name in enumerate(criteria):
-            rr = 4 + i_c
-            for k, ac in enumerate(alt_codes):
-                cc = start_col + k
-                mat.loc[c_name, ac] = _safe_str(sh1.iat[rr, cc]).strip()
-        experts.append({
-            "expert_label": ex_name,
-            "alt_codes": alt_codes,
-            "alt_names": alt_names,
-            "criteria": criteria,
-            "optimization": optm,
-            "linguistic_matrix": mat
-        })
+    st.session_state.cocoso_scale_df = st.data_editor(
+        st.session_state.cocoso_scale_df,
+        use_container_width=True,
+        hide_index=True,
+        key="cocoso_scale_editor"
+    )
 
-    # --- sheet 2: computed pipeline + weights + final ranking ---
-    sh2 = pd.read_excel(xlsx_bytes_or_path, sheet_name=xls.sheet_names[1], header=None)
+    scale_map = scale_df_to_map(st.session_state.cocoso_scale_df)
+    code_options = list(scale_map.keys())
+    if len(code_options) < 2:
+        st.error("Please provide at least 2 linguistic codes in the scale table.")
+        st.stop()
 
-    # weights appear aligned with rows where col1 is CSF1.. (in your sample rows 20..31) and col86 has weights
-    # Find a "Weight" header:
-    w_loc = _find_cell(sh2, "Weight")
-    if not w_loc:
-        raise ValueError("Could not find 'Weight' column in sheet 2.")
-    _, w_col = w_loc
+    # ---- Step 1: define alternatives + criteria ----
+    st.subheader("Step 1: Define Alternatives and Criteria")
+    c1, c2 = st.columns(2)
+    alts_in = c1.text_input("Alternatives (comma-separated)", "T1, T2, T3", key="cocoso_alts_in")
+    crits_in = c2.text_input("Criteria (comma-separated)", "C1, C2, C3", key="cocoso_crits_in")
 
-    # Find block where first CSF appears near the weights; in sample it's rows 20..31
-    csf_rows = []
-    for rr in range(sh2.shape[0]):
-        v = _safe_str(sh2.iat[rr, 1]).strip()
-        if re.fullmatch(r"CSF\d+", v):
-            csf_rows.append(rr)
+    alternatives = [a.strip() for a in alts_in.split(",") if a.strip()]
+    criteria = [c.strip() for c in crits_in.split(",") if c.strip()]
 
-    # take the contiguous run starting at the first CSF after the "CSFs a b c ..." header near row 19
-    # simplest: take the 12 CSFs with weights present (non-NaN)
-    weight_rows = [rr for rr in csf_rows if not pd.isna(sh2.iat[rr, w_col])]
-    # pick first 12
-    weight_rows = sorted(weight_rows)[:12]
-
-    crit2 = [_safe_str(sh2.iat[rr, 1]).strip() for rr in weight_rows]
-    opt2  = [_safe_str(sh2.iat[rr, 0]).strip() for rr in weight_rows]
-    weights = [float(sh2.iat[rr, w_col]) for rr in weight_rows]
-
-    crit_weight_df = pd.DataFrame({"Criterion": crit2, "Optimization": opt2, "Weight": weights})
-
-    # alternatives block headers: row where col0 is 'Optm.' and then several 'T1','T2',...
-    # in sample it's row 18, but detect by scanning for 'Optm.' in col0
-    header_r = None
-    for rr in range(sh2.shape[0]):
-        if _safe_str(sh2.iat[rr, 0]).strip() == "Optm.":
-            header_r = rr
-            break
-    if header_r is None:
-        raise ValueError("Could not find 'Optm.' header row in sheet 2.")
-
-    alt_starts = []
-    for j in range(sh2.shape[1]):
-        v = _safe_str(sh2.iat[header_r, j]).strip()
-        if re.fullmatch(r"T\d+", v):
-            alt_starts.append((v, j))
-    alt_codes2 = [a for a, _ in alt_starts]
-
-    # normalized decision matrices (rows weight_rows, each alternative has 12 columns: a..lh2)
-    # column layout in your sheet: at start: a b c d uh1 uh2 e f g h lh1 lh2 (12 cols)
-    keys12 = ["a","b","c","d","uh1","uh2","e","f","g","h","lh1","lh2"]
-    norm_mats = {}  # alt_code -> DataFrame(criteria x 1 cell IT2TrFS)
-    for alt, start_c in alt_starts:
-        # the normalized values are located at the same columns start_c..start_c+11 and rows weight_rows
-        tmp = []
-        for rr, c_name in zip(weight_rows, crit2):
-            row = {k: sh2.iat[rr, start_c + idx] for idx, k in enumerate(keys12)}
-            if any(pd.isna(row[k]) for k in keys12):
-                it2 = None
-            else:
-                it2 = _parse_it2_from_row({k: float(row[k]) for k in keys12})
-            tmp.append((c_name, it2))
-        norm_mats[alt] = pd.DataFrame({"Criterion": [t[0] for t in tmp], "IT2TrFS": [t[1] for t in tmp]}).set_index("Criterion")
-
-    # Sbi/Pbi and final K + Rank block (in your sample starts at row with 'Sbi' in col2)
-    sbi_loc = _find_cell(sh2, "Sbi")
-    if not sbi_loc:
-        raise ValueError("Could not find 'Sbi' block in sheet 2.")
-    sbi_r, _ = sbi_loc
-
-    # rows with alternatives are sbi_r+2 .. (until blank)
-    rows_alt = []
-    for rr in range(sbi_r + 2, sh2.shape[0]):
-        a = _safe_str(sh2.iat[rr, 1]).strip()
-        if re.fullmatch(r"T\d+", a):
-            rows_alt.append(rr)
-        elif rows_alt:
-            break
-
-    # Crisp columns are in your sample: 27 (Crisp SBi) and 28 (Crisp PBi)
-    # Kia/Kib/Kic/K/Rank are in 31..35
-    final_rows = []
-    for rr in rows_alt:
-        alt = _safe_str(sh2.iat[rr, 1]).strip()
-        # Technology names appear in col37 in sample
-        tech = _safe_str(sh2.iat[rr, 37]).strip()
-        final_rows.append({
-            "Alt": alt,
-            "Technology": tech if tech else alt,
-            "Crisp_SBi": float(sh2.iat[rr, 27]),
-            "Crisp_PBi": float(sh2.iat[rr, 28]),
-            "Kia": float(sh2.iat[rr, 31]),
-            "Kib": float(sh2.iat[rr, 32]),
-            "Kic": float(sh2.iat[rr, 33]),
-            "K": float(sh2.iat[rr, 34]),
-            "Rank": int(sh2.iat[rr, 35]),
-        })
-    final_df = pd.DataFrame(final_rows).sort_values("Rank")
-
-    return {
-        "sheet_names": xls.sheet_names,
-        "linguistic_scale_df": scale_df,
-        "code_to_it2": code_to_it2,
-        "experts": experts,
-        "criteria_weights_df": crit_weight_df,
-        "normalized_matrices": norm_mats,
-        "final_results_df": final_df
-    }
-
-
-def module_cocoso():
-    st.header("📊 IT2TrFS–CoCoSo (Excel-driven)")
-    st.write("Upload your CoCoSo Excel file (same structure as your sample). The app will read the inputs and show the CoCoSo outputs (weights, normalized matrices, SBi/PBi, K, Rank).")
-
-    # Use uploader; also allow using the mounted sample path if running locally in same environment.
-    uploaded = st.file_uploader("Upload IT2TrFS-CoCoSo Excel (.xlsx)", type=["xlsx"])
-
-    # If no upload, try to use the sample path you provided in this chat environment
-    sample_path = "/mnt/data/d57c9134-88cf-4ba8-916f-735b7f628342.xlsx"
-
-    data = None
-    try:
-        if uploaded is not None:
-            data = parse_cocoso_excel(uploaded)
-        else:
-            # fallback: sample
-            data = parse_cocoso_excel(sample_path)
-            st.info("Using the provided sample Excel (mounted in the environment). Upload your own file to replace it.")
-    except Exception as e:
-        st.error(f"Failed to parse Excel: {e}")
+    if len(alternatives) < 2 or len(criteria) < 1:
+        st.warning("Please enter at least 2 alternatives and at least 1 criterion.")
         return
 
-    # quick overview
-    n_exp = len(data["experts"])
-    n_crit = len(data["criteria_weights_df"])
-    n_alt = len(data["final_results_df"])
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Experts detected", n_exp)
-    c2.metric("Criteria detected", n_crit)
-    c3.metric("Alternatives detected", n_alt)
+    # ---- Step 2: criterion weights & types ----
+    st.subheader("Step 2: Criterion type & weights")
+    if "cocoso_crit_df" not in st.session_state or list(st.session_state.cocoso_crit_df["Criterion"]) != criteria:
+        w = [round(1/len(criteria), 6)] * len(criteria)
+        if len(w) > 1:
+            w[-1] = 1.0 - sum(w[:-1])
+        st.session_state.cocoso_crit_df = pd.DataFrame({
+            "Criterion": criteria,
+            "Type": ["Benefit"] * len(criteria),
+            "Weight": w
+        })
 
-    with st.expander("Linguistic scale read from Excel", expanded=False):
-        df = data["linguistic_scale_df"].copy()
-        df["IT2TrFS (formatted)"] = df["IT2TrFS"].apply(lambda x: format_it2(x))
-        st.dataframe(df[["Linguistic Attribute", "Code", "IT2TrFS (formatted)"]], use_container_width=True, hide_index=True)
-
-    with st.expander("Expert decision matrices (linguistic codes) read from Excel", expanded=False):
-        for ex in data["experts"]:
-            st.subheader(ex["expert_label"])
-            meta = pd.DataFrame({"Criterion": ex["criteria"], "Optimization": ex["optimization"]})
-            st.dataframe(meta, use_container_width=True, hide_index=True)
-            st.dataframe(ex["linguistic_matrix"], use_container_width=True)
-
-    st.subheader("Criteria weights (from Excel)")
-    st.dataframe(
-        data["criteria_weights_df"].style.format({"Weight": "{:.6f}"}),
+    st.session_state.cocoso_crit_df = st.data_editor(
+        st.session_state.cocoso_crit_df,
+        hide_index=True,
         use_container_width=True,
-        hide_index=True
+        column_config={
+            "Type": st.column_config.SelectboxColumn("Type", options=["Benefit","Cost"]),
+            "Weight": st.column_config.NumberColumn("Weight", min_value=0.0, max_value=1.0, format="%.6f")
+        },
+        key="cocoso_crit_editor"
     )
 
-    with st.expander("Normalized IT2TrFS decision matrices (from Excel)", expanded=False):
-        # show one by one
-        for alt, df_alt in data["normalized_matrices"].items():
-            st.markdown(f"**{alt}**")
-            show = df_alt.copy()
-            show["IT2TrFS"] = show["IT2TrFS"].apply(lambda x: "N/A" if x is None else format_it2(x))
-            st.dataframe(show, use_container_width=True)
+    crit_types = st.session_state.cocoso_crit_df["Type"].tolist()
+    crit_w = st.session_state.cocoso_crit_df["Weight"].astype(float).tolist()
+    if not np.isclose(sum(crit_w), 1.0):
+        st.error(f"Criterion weights must sum to 1. Current sum: {sum(crit_w):.6f}")
+        st.stop()
 
-    st.subheader("Final CoCoSo results (from Excel)")
-    st.dataframe(
-        data["final_results_df"].style.format({
-            "Crisp_SBi": "{:.6f}",
-            "Crisp_PBi": "{:.6f}",
-            "Kia": "{:.6f}",
-            "Kib": "{:.6f}",
-            "Kic": "{:.6f}",
-            "K": "{:.6f}",
-        }),
-        use_container_width=True,
-        hide_index=True
+    # ---- Step 3: experts & weights ----
+    st.subheader("Step 3: Experts")
+    n_exp = st.number_input("Number of experts", min_value=1, max_value=20, value=2, step=1, key="cocoso_nexp")
+
+    st.markdown("**Expert weights** (must sum to 1.0)")
+    exp_w = []
+    cols = st.columns(n_exp) if n_exp > 1 else [st.container()]
+    if n_exp > 1:
+        for i in range(n_exp):
+            with cols[i]:
+                exp_w.append(st.number_input(f"E{i+1}", 0.0, 1.0, value=1.0/n_exp, step=0.05, format="%.2f", key=f"cocoso_expw_{i}"))
+        if not np.isclose(sum(exp_w), 1.0):
+            st.error(f"Expert weights must sum to 1. Current sum: {sum(exp_w):.2f}")
+            st.stop()
+    else:
+        exp_w = [1.0]
+
+    # ---- Step 4: expert matrices (dropdown) ----
+    st.subheader("Step 4: Expert evaluation matrices (linguistic codes)")
+    if "cocoso_expert_mats" not in st.session_state:
+        st.session_state.cocoso_expert_mats = {}
+
+    # init/reset if dimension changed
+    need_reset = (
+        len(st.session_state.cocoso_expert_mats) != n_exp or
+        (n_exp > 0 and (
+            list(st.session_state.cocoso_expert_mats.get(0, pd.DataFrame())).count != 0 and
+            (set(st.session_state.cocoso_expert_mats[0].index) != set(alternatives) or
+             set(st.session_state.cocoso_expert_mats[0].columns) != set(criteria))
+        ))
     )
+    if need_reset or len(st.session_state.cocoso_expert_mats) != n_exp:
+        st.session_state.cocoso_expert_mats = {i: pd.DataFrame(code_options[0], index=alternatives, columns=criteria) for i in range(n_exp)}
 
-    # optional chart
-    with st.expander("Ranking chart", expanded=False):
-        df = data["final_results_df"].copy()
-        fig, ax = plt.subplots(figsize=(9, 5))
-        ax.bar(df["Technology"], df["K"])
-        ax.set_ylabel("K (CoCoSo final score)")
-        ax.set_title("IT2TrFS-CoCoSo Final Scores")
-        plt.xticks(rotation=45, ha="right")
-        st.pyplot(fig)
+    tabs = st.tabs([f"Expert {i+1}" for i in range(n_exp)])
+    for i, tab in enumerate(tabs):
+        with tab:
+            st.caption(f"Fill codes using dropdowns (options come from your scale table).")
+            st.session_state.cocoso_expert_mats[i] = st.data_editor(
+                st.session_state.cocoso_expert_mats[i],
+                use_container_width=True,
+                column_config={c: st.column_config.SelectboxColumn(c, options=code_options) for c in criteria},
+                key=f"cocoso_mat_{i}"
+            )
+
+    # ---- Step 5: Run CoCoSo ----
+    st.subheader("Step 5: Run IT2TrFS–CoCoSo")
+    if st.button("✅ Calculate CoCoSo Ranking", type="primary", use_container_width=True, key="cocoso_run"):
+        # 5.1 aggregated IT2 decision matrix
+        agg_it2 = pd.DataFrame(index=alternatives, columns=criteria, dtype=object)
+        for a in alternatives:
+            for c in criteria:
+                it2s = []
+                for ei in range(n_exp):
+                    code = str(st.session_state.cocoso_expert_mats[ei].loc[a, c]).strip()
+                    if code not in scale_map:
+                        st.error(f"Unknown code '{code}' at (Alt={a}, Crit={c}) for Expert {ei+1}.")
+                        st.stop()
+                    it2s.append(scale_map[code])
+                agg_it2.loc[a, c] = it2_weighted_avg(it2s, exp_w)
+
+        st.markdown("### 5.1 Aggregated IT2TrFS decision matrix")
+        show_agg = agg_it2.applymap(lambda x: format_it2(x) if x is not None else "N/A")
+        st.dataframe(show_agg, use_container_width=True)
+
+        # 5.2 crisp matrix by defuzzification (used for normalization + CoCoSo math)
+        crisp = agg_it2.applymap(lambda x: defuzz_it2(x) if x is not None else np.nan)
+
+        st.markdown("### 5.2 Crisp matrix (defuzzified)")
+        st.dataframe(crisp.style.format(precision=6), use_container_width=True)
+
+        # 5.3 normalization (standard CoCoSo crisp normalization)
+        norm = crisp.copy()
+        for j, c in enumerate(criteria):
+            col = crisp[c].astype(float)
+            if crit_types[j] == "Benefit":
+                mx = np.nanmax(col.values)
+                norm[c] = col / mx if mx != 0 else 0.0
+            else:
+                mn = np.nanmin(col.values)
+                norm[c] = mn / col if np.all(col.values != 0) else 0.0
+
+        st.markdown("### 5.3 Normalized crisp matrix")
+        st.dataframe(norm.style.format(precision=6), use_container_width=True)
+
+        # 5.4 S and P
+        w = np.array(crit_w, dtype=float)
+        S = norm.values @ w
+        P = np.prod(np.power(np.maximum(norm.values, 1e-12), w), axis=1)
+
+        res = pd.DataFrame({
+            "Alternative": alternatives,
+            "S": S,
+            "P": P
+        })
+
+        st.markdown("### 5.4 CoCoSo S and P")
+        st.dataframe(res.style.format(precision=6), use_container_width=True, hide_index=True)
+
+        # 5.5 Kia/Kib/Kic/K (same structure as your IVIFN CoCoSo)
+        s = res["S"].values
+        p = res["P"].values
+
+        Kia = (s + p) / np.sum(s + p) if np.sum(s + p) != 0 else np.zeros_like(s)
+        Kib = (s / np.min(s) if np.min(s) != 0 else 0) + (p / np.min(p) if np.min(p) != 0 else 0)
+
+        tau = 0.5
+        denom = tau*np.max(s) + (1-tau)*np.max(p)
+        Kic = (tau*s + (1-tau)*p) / denom if denom != 0 else np.zeros_like(s)
+
+        K = np.power(Kia*Kib*Kic, 1/3) + (Kia + Kib + Kic)/3
+
+        final = pd.DataFrame({
+            "Alternative": alternatives,
+            "Kia": Kia,
+            "Kib": Kib,
+            "Kic": Kic,
+            "K": K
+        })
+        final["Rank"] = final["K"].rank(ascending=False, method="min").astype(int)
+        final = final.sort_values("Rank").reset_index(drop=True)
+
+        st.markdown("### 5.5 Final CoCoSo ranking")
+        st.dataframe(final.style.format(precision=6), use_container_width=True, hide_index=True)
+
+        with st.expander("Ranking chart", expanded=False):
+            fig, ax = plt.subplots(figsize=(9, 5))
+            ax.bar(final["Alternative"], final["K"])
+            ax.set_ylabel("K (final score)")
+            ax.set_title("IT2TrFS–CoCoSo final scores")
+            st.pyplot(fig)
 
 
 # ============================================================
-# WINGS module UI (your original app flow moved into a function)
+# 4) IT2TrFS–WINGS module UI (kept simple)
 # ============================================================
 
 def module_wings():
     st.header("📊 IT2TrFS–WINGS")
-    st.write("""
-    This tool implements the Interval Type-2 Trapezoidal Fuzzy Sets Weighted Influence Non-linear Gauge System (IT2TrFS WINGS)
-    method for analyzing systems with interrelated components under uncertainty, incorporating input from multiple experts.
-    """)
 
-    tab_howto, tab_analysis = st.tabs(["📘 How to Use", "📊 Analysis"])
+    with st.sidebar:
+        st.subheader("⚙️ WINGS Configuration")
+        n_components = st.number_input("Number of Components", min_value=2, max_value=25, value=3, step=1, key="w_ncomp")
+        n_experts = st.number_input("Number of Experts", min_value=1, max_value=15, value=1, step=1, key="w_nexp")
 
-    with tab_howto:
-        st.markdown("""
-        ### Overview
-        The IT2TrFS WINGS method helps analyze complex systems with interrelated components,
-        handling uncertainty using Interval Type-2 Trapezoidal Fuzzy Sets (IT2TrFSs).
-        """)
+        component_names = [st.text_input(f"Component {i+1}", value=f"C{i+1}", key=f"w_comp_{i}") for i in range(n_components)]
 
-        with st.expander("Linguistic Terms Reference"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**Strength/Relevance Terms**")
-                strength_df = pd.DataFrame([
-                    {"Abbreviation": abbr, "Full Form": FULL_FORMS[abbr], "IT2TrFS Interval": format_it2(it2)}
-                    for abbr, it2 in LINGUISTIC_TERMS["strength"].items()
-                ])
-                st.dataframe(strength_df, hide_index=True, use_container_width=True)
-            with col2:
-                st.write("**Influence Terms**")
-                infl_df = pd.DataFrame([
-                    {"Abbreviation": abbr, "Full Form": FULL_FORMS[abbr], "IT2TrFS Interval": format_it2(it2)}
-                    for abbr, it2 in LINGUISTIC_TERMS["influence"].items()
-                ])
-                st.dataframe(infl_df, hide_index=True, use_container_width=True)
-
-    with tab_analysis:
-        with st.sidebar:
-            st.subheader("⚙️ WINGS Configuration")
-            n_components = st.number_input("Number of Components", min_value=2, max_value=25, value=3)
-            n_experts = st.number_input("Number of Experts", min_value=1, max_value=15, value=1)
-
-            component_names = []
-            for i in range(n_components):
-                component_names.append(st.text_input(f"Name of Component {i+1}", value=f"C{i+1}", key=f"w_comp_{i}"))
-
-            expert_weights = None
-            if n_experts > 1:
-                st.markdown("---")
-                st.write("Assign weights to each expert (must sum to 1.0):")
-                weights = []
-                total = 0.0
-                for i in range(n_experts):
-                    max_val = min(1.0, 1.0 - total + (1.0/n_experts))
-                    w = st.number_input(
-                        f"Weight for Expert {i+1}",
-                        min_value=0.0, max_value=max_val,
-                        value=1.0/n_experts, step=0.01, format="%.2f",
-                        key=f"w_expw_{i}"
-                    )
-                    weights.append(w)
-                    total += w
-                st.write(f"**Current total:** {total:.2f}/1.0")
-                if abs(total - 1.0) > 0.001:
-                    st.error("Weights must sum to 1.0.")
-                    st.stop()
-                expert_weights = weights
-
+        expert_weights = None
+        if n_experts > 1:
             st.markdown("---")
-            st.info("Use abbreviations for strength and influence assessments.")
+            st.caption("Expert weights (sum=1)")
+            ws = []
+            cols = st.columns(n_experts)
+            for i in range(n_experts):
+                with cols[i]:
+                    ws.append(st.number_input(f"E{i+1}", 0.0, 1.0, value=1.0/n_experts, step=0.05, key=f"w_expw_{i}"))
+            if not np.isclose(sum(ws), 1.0):
+                st.error("Expert weights must sum to 1.")
+                st.stop()
+            expert_weights = ws
 
-        if 'wings_experts_data' not in st.session_state:
-            st.session_state.wings_experts_data = {}
+    # session storage
+    if "w_experts" not in st.session_state:
+        st.session_state.w_experts = {}
 
-        for expert_idx in range(n_experts):
-            if expert_idx not in st.session_state.wings_experts_data:
-                st.session_state.wings_experts_data[expert_idx] = {
-                    'strengths_linguistic': ["HR" for _ in range(n_components)],
-                    'influence_matrix_linguistic': [["ELI" for _ in range(n_components)] for _ in range(n_components)]
-                }
+    for ei in range(n_experts):
+        if ei not in st.session_state.w_experts:
+            st.session_state.w_experts[ei] = {
+                "strengths": ["HR"] * n_components,
+                "infl": [["ELI"] * n_components for _ in range(n_components)]
+            }
+        else:
+            if len(st.session_state.w_experts[ei]["strengths"]) != n_components:
+                st.session_state.w_experts[ei]["strengths"] = ["HR"] * n_components
+            if len(st.session_state.w_experts[ei]["infl"]) != n_components:
+                st.session_state.w_experts[ei]["infl"] = [["ELI"] * n_components for _ in range(n_components)]
+
+    tabs = st.tabs([f"Expert {i+1}" for i in range(n_experts)]) if n_experts > 1 else [st.container()]
+
+    strengths_list = []
+    infl_list = []
+
+    for ei in range(n_experts):
+        with tabs[ei] if n_experts > 1 else tabs[0]:
+            st.markdown("**Strengths**")
+            cols = st.columns(n_components)
+            strengths = []
+            for i in range(n_components):
+                with cols[i]:
+                    cur = st.session_state.w_experts[ei]["strengths"][i]
+                    pick = st.selectbox(component_names[i], list(LINGUISTIC_TERMS_WINGS["strength"].keys()),
+                                        index=list(LINGUISTIC_TERMS_WINGS["strength"].keys()).index(cur),
+                                        key=f"w_strength_{ei}_{i}")
+                    st.session_state.w_experts[ei]["strengths"][i] = pick
+                    strengths.append(LINGUISTIC_TERMS_WINGS["strength"][pick])
+
+            st.markdown("**Influence matrix (row → column)**")
+            infl = [[zero_it2() for _ in range(n_components)] for _ in range(n_components)]
+            for i in range(n_components):
+                row_cols = st.columns(n_components)
+                for j in range(n_components):
+                    with row_cols[j]:
+                        if i == j:
+                            st.markdown("—")
+                        else:
+                            cur = st.session_state.w_experts[ei]["infl"][i][j]
+                            pick = st.selectbox("",
+                                list(LINGUISTIC_TERMS_WINGS["influence"].keys()),
+                                index=list(LINGUISTIC_TERMS_WINGS["influence"].keys()).index(cur),
+                                key=f"w_infl_{ei}_{i}_{j}",
+                                label_visibility="collapsed"
+                            )
+                            st.session_state.w_experts[ei]["infl"][i][j] = pick
+                            infl[i][j] = LINGUISTIC_TERMS_WINGS["influence"][pick]
+
+        strengths_list.append(strengths)
+        infl_list.append(infl)
+
+    if st.button("🚀 Run IT2TrFS–WINGS", type="primary", use_container_width=True, key="w_run"):
+        res = wings_method_experts(strengths_list, infl_list, expert_weights)
+        st.success("Done!")
+
+        t1, t2, t3 = st.tabs(["Flowchart", "Matrices", "Results"])
+        with t1:
+            if n_experts > 1:
+                for ei in range(n_experts):
+                    ex_data = {
+                        "strengths_linguistic": st.session_state.w_experts[ei]["strengths"],
+                        "influence_matrix_linguistic": st.session_state.w_experts[ei]["infl"],
+                    }
+                    st.graphviz_chart(generate_flowchart_for_expert(ex_data, component_names, ei), use_container_width=True)
             else:
-                if len(st.session_state.wings_experts_data[expert_idx]['strengths_linguistic']) != n_components:
-                    st.session_state.wings_experts_data[expert_idx]['strengths_linguistic'] = ["HR" for _ in range(n_components)]
-                if len(st.session_state.wings_experts_data[expert_idx]['influence_matrix_linguistic']) != n_components:
-                    st.session_state.wings_experts_data[expert_idx]['influence_matrix_linguistic'] = [["ELI" for _ in range(n_components)] for _ in range(n_components)]
+                ex_data = {
+                    "strengths_linguistic": st.session_state.w_experts[0]["strengths"],
+                    "influence_matrix_linguistic": st.session_state.w_experts[0]["infl"],
+                }
+                st.graphviz_chart(generate_flowchart_for_expert(ex_data, component_names), use_container_width=True)
 
-        st.subheader("👨‍💼 Expert Input" if n_experts > 1 else "👨‍💼 Data Input")
+        with t2:
+            st.subheader("Average SIDRM")
+            st.dataframe(format_it2_df(res["average_sidrm"], component_names, component_names), use_container_width=True)
+            st.subheader("Normalized Z")
+            st.dataframe(format_it2_df(res["normalized_matrix"], component_names, component_names), use_container_width=True)
+            st.subheader("Total T")
+            st.dataframe(format_it2_df(res["total_matrix"], component_names, component_names), use_container_width=True)
 
-        expert_tabs = st.tabs([f"Expert {i+1}" for i in range(n_experts)]) if n_experts > 1 else [st.container()]
+        with t3:
+            out = pd.DataFrame({
+                "Component": component_names,
+                "TI": res["total_impact_defuzz"],
+                "TR": res["total_receptivity_defuzz"],
+                "Engagement": res["engagement_defuzz"],
+                "Role": res["role_defuzz"],
+                "Type": ["Cause" if x > 0 else "Effect" for x in res["role_defuzz"]],
+            }).sort_values("Engagement", ascending=False)
+            st.dataframe(out.style.format(precision=6), use_container_width=True, hide_index=True)
 
-        strengths_list = []
-        influence_matrices_list = []
-
-        for expert_idx in range(n_experts):
-            tab = expert_tabs[expert_idx] if n_experts > 1 else expert_tabs[0]
-            with tab:
-                if n_experts > 1:
-                    st.markdown(f"**Expert {expert_idx+1}**")
-                    if expert_weights:
-                        st.caption(f"Weight: {expert_weights[expert_idx]:.2f}")
-
-                st.write("**Component Strengths/Relevance**")
-                strengths = []
-                cols = st.columns(n_components)
-                for i in range(n_components):
-                    with cols[i]:
-                        cur = st.session_state.wings_experts_data[expert_idx]['strengths_linguistic'][i]
-                        strength_term = st.selectbox(
-                            component_names[i],
-                            options=list(LINGUISTIC_TERMS["strength"].keys()),
-                            index=list(LINGUISTIC_TERMS["strength"].keys()).index(cur),
-                            key=f"w_strength_{expert_idx}_{i}"
-                        )
-                        st.session_state.wings_experts_data[expert_idx]['strengths_linguistic'][i] = strength_term
-                        strengths.append(LINGUISTIC_TERMS["strength"][strength_term])
-
-                st.write("**Influence Matrix** (row influences column)")
-                influence_matrix = [[None]*n_components for _ in range(n_components)]
-                for i in range(n_components):
-                    row_cols = st.columns(n_components)
-                    for j in range(n_components):
-                        with row_cols[j]:
-                            if i == j:
-                                st.markdown("—")
-                                influence_matrix[i][j] = zero_it2()  # placeholder not used for diag
-                            else:
-                                cur = st.session_state.wings_experts_data[expert_idx]['influence_matrix_linguistic'][i][j]
-                                inf = st.selectbox(
-                                    f"{component_names[i]}→{component_names[j]}",
-                                    options=list(LINGUISTIC_TERMS["influence"].keys()),
-                                    index=list(LINGUISTIC_TERMS["influence"].keys()).index(cur),
-                                    key=f"w_inf_{expert_idx}_{i}_{j}",
-                                    label_visibility="collapsed"
-                                )
-                                st.session_state.wings_experts_data[expert_idx]['influence_matrix_linguistic'][i][j] = inf
-                                influence_matrix[i][j] = LINGUISTIC_TERMS["influence"][inf]
-
-            strengths_list.append(strengths)
-            influence_matrices_list.append(influence_matrix)
-
-        if st.button("🚀 Run IT2TrFS WINGS Analysis", type="primary", use_container_width=True):
-            with st.spinner("Calculating..."):
-                results = wings_method_experts(strengths_list, influence_matrices_list, expert_weights)
-
-            st.success("Analysis Complete!")
-
-            tab1, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-                "🔗 Flowchart", "🧮 IT2TrFS Matrices", "📊 Results",
-                "🏷️ Component Classification", "📈 Visualization", "📤 Export"
-            ])
-
-            with tab1:
-                if n_experts > 1:
-                    for ei in range(n_experts):
-                        st.subheader(f"Expert {ei+1}")
-                        st.graphviz_chart(generate_flowchart_for_expert(
-                            st.session_state.wings_experts_data[ei], component_names, ei
-                        ), use_container_width=True)
-                else:
-                    st.graphviz_chart(generate_flowchart_for_expert(
-                        st.session_state.wings_experts_data[0], component_names
-                    ), use_container_width=True)
-
-            with tab3:
-                st.subheader("Average SIDRM")
-                st.dataframe(format_it2_df(results['average_sidrm'], component_names, component_names), use_container_width=True)
-                st.subheader("Normalized Matrix Z")
-                st.dataframe(format_it2_df(results['normalized_matrix'], component_names, component_names), use_container_width=True)
-                st.subheader("Total Matrix T")
-                st.dataframe(format_it2_df(results['total_matrix'], component_names, component_names), use_container_width=True)
-
-            with tab4:
-                res_df = pd.DataFrame({
-                    "Component": component_names,
-                    "TI (defuzz)": results["total_impact_defuzz"],
-                    "TR (defuzz)": results["total_receptivity_defuzz"],
-                    "Engagement (defuzz)": results["engagement_defuzz"],
-                    "Role (defuzz)": results["role_defuzz"],
-                }).sort_values("Engagement (defuzz)", ascending=False).reset_index(drop=True)
-                res_df["Rank (by engagement)"] = np.arange(1, len(res_df)+1)
-                st.dataframe(res_df.style.format(precision=6), use_container_width=True, hide_index=True)
-
-            with tab5:
-                class_df = pd.DataFrame({
-                    "Component": component_names,
-                    "Type": ["Cause" if r > 0 else "Effect" for r in results["role_defuzz"]],
-                    "Role (defuzz)": results["role_defuzz"],
-                    "Engagement (defuzz)": results["engagement_defuzz"],
-                })
-                st.dataframe(class_df.style.format({"Role (defuzz)": "{:.6f}", "Engagement (defuzz)": "{:.6f}"}),
-                             use_container_width=True, hide_index=True)
-
-            with tab6:
-                fig, ax = plt.subplots(figsize=(9, 6))
-                for i, name in enumerate(component_names):
-                    ax.scatter(results["engagement_defuzz"][i], results["role_defuzz"][i], s=120)
-                    ax.annotate(name, (results["engagement_defuzz"][i], results["role_defuzz"][i]), xytext=(6, 6), textcoords="offset points")
-                ax.axhline(0, linestyle="--")
-                ax.set_xlabel("Engagement (defuzz)")
-                ax.set_ylabel("Role (defuzz)")
-                ax.set_title("Engagement vs Role")
-                st.pyplot(fig)
-
-            with tab7:
-                doc = create_word_report(results, component_names, n_experts, expert_weights)
-                st.markdown(get_word_download_link(doc), unsafe_allow_html=True)
+            doc = create_word_report(res, component_names, n_experts, expert_weights)
+            st.markdown(get_word_download_link(doc), unsafe_allow_html=True)
 
 
 # ============================================================
-# MAIN APP: sidebar navigation with two modules
+# 5) MAIN APP (sidebar 2 options)
 # ============================================================
 
 def main():
     st.set_page_config(page_title="IT2TrFS Toolkit (WINGS + CoCoSo)", layout="wide", page_icon="📊")
-
     st.title("🧰 IT2TrFS Toolkit")
+
     st.sidebar.header("Navigation")
     page = st.sidebar.radio("Choose a Model", ["IT2TrFS–WINGS", "IT2TrFS–CoCoSo"], index=0)
-    st.sidebar.markdown("---")
-    st.sidebar.info("Both modules are independent. Use the left menu to switch.")
 
     if page == "IT2TrFS–WINGS":
         module_wings()
     else:
-        module_cocoso()
+        module_cocoso_manual()
 
 if __name__ == "__main__":
     main()
